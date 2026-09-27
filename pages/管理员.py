@@ -13,7 +13,6 @@ import sys
 from pathlib import Path
 
 import folium
-import pandas as pd
 import streamlit as st
 from streamlit_folium import st_folium
 
@@ -293,6 +292,11 @@ with tab_table:
                 "奖项": s.award,
                 "示例": "示例" if s.is_demo else "",
             })
+        # 按需导入 pandas：它只在「总表」这一个页签用得上，而云端
+        # requirements.txt 刻意不含 pandas（部署更快）。顶层 import 会让
+        # 整个管理后台在云端直接 ImportError，所以挪到这里。
+        import pandas as pd
+
         df = pd.DataFrame(rows)
         st.dataframe(df, use_container_width=True, hide_index=True, height=420)
 
