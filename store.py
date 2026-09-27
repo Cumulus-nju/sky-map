@@ -205,14 +205,27 @@ class SupabaseStore(Store):
 
     # ---- 底层 HTTP ----
     def _headers(self, extra: dict | None = None) -> dict:
-        h = {
-            "apikey": self.key,
-            "Authorization": f"Bearer {self.key}",
-            "Content-Type": "application/json",
-        }
+        """构造 PostgREST 请求头。
+
+        密钥分两代，请求头写法不同（Supabase 2026 年底弃用旧密钥）：
+          * 旧版 JWT（`eyJ...`，即 anon / service_role）：必须同时放在
+            `apikey` 和 `Authorization: Bearer` 里，PostgREST 靠 Bearer
+            解出的 JWT 决定 Postgres 角色（service_role 才能绕过 RLS）。
+          * 新版非 JWT（`sb_secret_...` / `sb_publishable_...`）：官方明确
+            "无法在 Authorization: Bearer 中发送，除非与 apikey 完全相等，
+            否则会被拒绝，因为该值不是 JWT"。所以只发 `apikey`，不发
+            Authorization，由平台边缘层按密钥解析权限。
+        """
+        h = {"apikey": self.key, "Content-Type": "application/json"}
+        if not self._is_new_key_format(self.key):
+            h["Authorization"] = f"Bearer {self.key}"
         if extra:
             h.update(extra)
         return h
+
+    @staticmethod
+    def _is_new_key_format(key: str) -> bool:
+        return (key or "").strip().startswith(("sb_secret_", "sb_publishable_"))
 
     def _rest(self, path: str) -> str:
         return f"{self.url}/rest/v1/{path}"

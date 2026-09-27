@@ -5,9 +5,13 @@
 
 用法（PowerShell）：
     $env:SUPABASE_URL="https://xxx.supabase.co"
-    $env:SUPABASE_KEY="eyJhbGciOi..."
+    $env:SUPABASE_KEY="<密钥，旧版是 eyJ... 开头的 service_role，新版是 sb_secret_... 开头的私有密钥>"
     python tools/migrate_to_supabase.py --dry-run     # 先看看要传什么
     python tools/migrate_to_supabase.py               # 真传
+
+密钥必须用**高权限**的那把（旧版 service_role / 新版 secret 私有密钥），
+不能用 anon / publishable —— 表开了 RLS 且没有策略，低权限密钥读不到数据。
+两代密钥的请求头写法不同，store.SupabaseStore._headers() 已自动区分。
 
 先在 Supabase SQL Editor 里执行过 deploy/supabase_schema.sql。
 """
@@ -39,7 +43,7 @@ def main() -> int:
         print("✗ 没有检测到 SUPABASE_URL / SUPABASE_KEY 环境变量。")
         print("  先在 PowerShell 里设置这两个变量，例如：")
         print('    $env:SUPABASE_URL="https://xxxx.supabase.co"')
-        print('    $env:SUPABASE_KEY="eyJhbGciOi..."')
+        print('    $env:SUPABASE_KEY="<service_role 或 sb_secret_ 私有密钥>"')
         return 1
 
     local = LocalStore()
