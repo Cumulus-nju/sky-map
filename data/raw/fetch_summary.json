@@ -1,0 +1,18 @@
+{
+  "gulou": {
+    "buildings": 298,
+    "named_buildings": 163,
+    "walk_edges": 1432,
+    "poi": 27
+  },
+  "xianlin": {
+    "buildings": 297,
+    "named_buildings": 168,
+    "walk_edges": 2360,
+    "poi": 60
+  },
+  "suzhou": {
+    "walk_edges": 26,
+    "poi": 2
+  }
+}

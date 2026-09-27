@@ -1,0 +1,10 @@
+# 本地开发额外依赖
+#
+# 只有「抓取校区底图」(fetch_base.py) 与 tools/verify_align.py 需要。
+# 压缩包里已经带好三校区底图数据，正常使用/云端部署都不需要装这些。
+#
+#     pip install -r requirements-local.txt
+
+geopandas>=0.14
+shapely>=2.0
+osmnx>=1.9

@@ -1,0 +1,19 @@
+﻿==============================================================
+ �����Ӱ �� �򿨵��ͼ ���� �����Լ�
+==============================================================
+
+[Python] 3.13.2   D:\Program Files\Python313\python.exe
+python : Traceback (most recent call last):
+At line:1 char:169
++ ... ; cd C:\Users\Administrator\.dsh\sky_map; python 环境自检.py 2>&1 | Out-F ...
++                                               ~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "C:\Users\Administrator\.dsh\sky_map\�����Լ�.py", line 117, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "C:\Users\Administrator\.dsh\sky_map\�����Լ�.py", line 44, in main
+    print("  \u2713 �汾����")
+    ~~~~~^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'gbk' codec can't encode character '\u2713' in position 2: illegal multibyte sequence

@@ -1,0 +1,293 @@
+<?xml version='1.0' encoding='utf-8'?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd"><key id="d15" for="edge" attr.name="bridge" attr.type="string"/>
+<key id="d14" for="edge" attr.name="geometry" attr.type="string"/>
+<key id="d13" for="edge" attr.name="length" attr.type="string"/>
+<key id="d12" for="edge" attr.name="reversed" attr.type="string"/>
+<key id="d11" for="edge" attr.name="oneway" attr.type="string"/>
+<key id="d10" for="edge" attr.name="name" attr.type="string"/>
+<key id="d9" for="edge" attr.name="highway" attr.type="string"/>
+<key id="d8" for="edge" attr.name="osmid" attr.type="string"/>
+<key id="d7" for="node" attr.name="street_count" attr.type="string"/>
+<key id="d6" for="node" attr.name="highway" attr.type="string"/>
+<key id="d5" for="node" attr.name="x" attr.type="string"/>
+<key id="d4" for="node" attr.name="y" attr.type="string"/>
+<key id="d3" for="graph" attr.name="simplified" attr.type="string"/>
+<key id="d2" for="graph" attr.name="crs" attr.type="string"/>
+<key id="d1" for="graph" attr.name="created_with" attr.type="string"/>
+<key id="d0" for="graph" attr.name="created_date" attr.type="string"/>
+<graph edgedefault="directed"><data key="d0">2026-09-27 21:41:08</data>
+<data key="d1">OSMnx 2.1.0</data>
+<data key="d2">epsg:4326</data>
+<data key="d3">True</data>
+<node id="2505958524">
+  <data key="d4">31.3480033</data>
+  <data key="d5">120.3725738</data>
+  <data key="d6">crossing</data>
+  <data key="d7">3</data>
+</node>
+<node id="5133000167">
+  <data key="d4">31.3477507</data>
+  <data key="d5">120.375666</data>
+  <data key="d7">3</data>
+</node>
+<node id="8336327978">
+  <data key="d4">31.3483304</data>
+  <data key="d5">120.3719444</data>
+  <data key="d7">3</data>
+</node>
+<node id="9538929654">
+  <data key="d4">31.348175</data>
+  <data key="d5">120.3729337</data>
+  <data key="d7">3</data>
+</node>
+<node id="9538929655">
+  <data key="d4">31.3479562</data>
+  <data key="d5">120.3728809</data>
+  <data key="d7">3</data>
+</node>
+<node id="9538929656">
+  <data key="d4">31.348134</data>
+  <data key="d5">120.3731895</data>
+  <data key="d6">crossing</data>
+  <data key="d7">3</data>
+</node>
+<node id="9538929657">
+  <data key="d4">31.3479175</data>
+  <data key="d5">120.3731382</data>
+  <data key="d6">crossing</data>
+  <data key="d7">3</data>
+</node>
+<node id="9538929658">
+  <data key="d4">31.3482227</data>
+  <data key="d5">120.372631</data>
+  <data key="d6">crossing</data>
+  <data key="d7">3</data>
+</node>
+<node id="13616182375">
+  <data key="d4">31.3569856</data>
+  <data key="d5">120.3721753</data>
+  <data key="d7">3</data>
+</node>
+<node id="13616200911">
+  <data key="d4">31.3482988</data>
+  <data key="d5">120.3721457</data>
+  <data key="d7">3</data>
+</node>
+<node id="13616200924">
+  <data key="d4">31.3569655</data>
+  <data key="d5">120.3720235</data>
+  <data key="d7">4</data>
+</node>
+<edge source="2505958524" target="9538929655" id="0">
+  <data key="d8">24451029</data>
+  <data key="d9">primary</data>
+  <data key="d10">太湖大道</data>
+  <data key="d11">False</data>
+  <data key="d12">False</data>
+  <data key="d13">29.629741425379887</data>
+</edge>
+<edge source="2505958524" target="9538929658" id="0">
+  <data key="d8">1035501511</data>
+  <data key="d9">footway</data>
+  <data key="d11">False</data>
+  <data key="d12">False</data>
+  <data key="d13">24.993602948979728</data>
+  <data key="d14">LINESTRING (120.3725738 31.3480033, 120.3725992 31.3481006, 120.372612 31.3481499, 120.372631 31.3482227)</data>
+</edge>
+<edge source="5133000167" target="9538929657" id="0">
+  <data key="d8">24451029</data>
+  <data key="d9">primary</data>
+  <data key="d10">太湖大道</data>
+  <data key="d11">False</data>
+  <data key="d12">True</data>
+  <data key="d13">241.20794176679232</data>
+  <data key="d14">LINESTRING (120.375666 31.3477507, 120.3752464 31.3477514, 120.3744982 31.3477802, 120.3737557 31.3478236, 120.3731382 31.3479175)</data>
+</edge>
+<edge source="8336327978" target="13616200911" id="0">
+  <data key="d8">97414915</data>
+  <data key="d9">primary</data>
+  <data key="d10">太湖大道</data>
+  <data key="d11">False</data>
+  <data key="d12">True</data>
+  <data key="d13">19.436280950421637</data>
+</edge>
+<edge source="8336327978" target="13616200924" id="0">
+  <data key="d8">[896835024, 1485164297, 1485164296]</data>
+  <data key="d9">secondary</data>
+  <data key="d11">False</data>
+  <data key="d12">True</data>
+  <data key="d13">960.7790896381945</data>
+  <data key="d15">yes</data>
+  <data key="d14">LINESTRING (120.3719444 31.3483304, 120.3719482 31.3484989, 120.3719111 31.3493252, 120.3718676 31.350182, 120.3718359 31.3508374, 120.3718373 31.3514193, 120.3718626 31.3518826, 120.3718713 31.3528667, 120.3718832 31.3539402, 120.3719103 31.3550664, 120.3719488 31.3558965, 120.3719727 31.3562716, 120.3720123 31.3568175, 120.3720235 31.3569655)</data>
+</edge>
+<edge source="9538929654" target="9538929658" id="0">
+  <data key="d8">97414915</data>
+  <data key="d9">primary</data>
+  <data key="d10">太湖大道</data>
+  <data key="d11">False</data>
+  <data key="d12">False</data>
+  <data key="d13">29.23054231024846</data>
+</edge>
+<edge source="9538929654" target="9538929656" id="0">
+  <data key="d8">97414915</data>
+  <data key="d9">primary</data>
+  <data key="d10">太湖大道</data>
+  <data key="d11">False</data>
+  <data key="d12">True</data>
+  <data key="d13">24.715655145640085</data>
+</edge>
+<edge source="9538929654" target="9538929655" id="0">
+  <data key="d8">1035501509</data>
+  <data key="d9">primary_link</data>
+  <data key="d11">False</data>
+  <data key="d12">True</data>
+  <data key="d13">24.84078532719117</data>
+  <data key="d14">LINESTRING (120.3729337 31.348175, 120.3729166 31.3481043, 120.372905 31.3480561, 120.3728809 31.3479562)</data>
+</edge>
+<edge source="9538929655" target="9538929657" id="0">
+  <data key="d8">24451029</data>
+  <data key="d9">primary</data>
+  <data key="d10">太湖大道</data>
+  <data key="d11">False</data>
+  <data key="d12">False</data>
+  <data key="d13">24.81008970123062</data>
+</edge>
+<edge source="9538929655" target="2505958524" id="0">
+  <data key="d8">24451029</data>
+  <data key="d9">primary</data>
+  <data key="d10">太湖大道</data>
+  <data key="d11">False</data>
+  <data key="d12">True</data>
+  <data key="d13">29.629741425379887</data>
+</edge>
+<edge source="9538929655" target="9538929654" id="0">
+  <data key="d8">1035501509</data>
+  <data key="d9">primary_link</data>
+  <data key="d11">False</data>
+  <data key="d12">False</data>
+  <data key="d13">24.840785327191167</data>
+  <data key="d14">LINESTRING (120.3728809 31.3479562, 120.372905 31.3480561, 120.3729166 31.3481043, 120.3729337 31.348175)</data>
+</edge>
+<edge source="9538929656" target="9538929654" id="0">
+  <data key="d8">97414915</data>
+  <data key="d9">primary</data>
+  <data key="d10">太湖大道</data>
+  <data key="d11">False</data>
+  <data key="d12">False</data>
+  <data key="d13">24.715655145640085</data>
+</edge>
+<edge source="9538929656" target="9538929657" id="0">
+  <data key="d8">1035501510</data>
+  <data key="d9">footway</data>
+  <data key="d11">False</data>
+  <data key="d12">True</data>
+  <data key="d13">24.561705503690128</data>
+  <data key="d14">LINESTRING (120.3731895 31.348134, 120.3731724 31.3480619, 120.3731607 31.3480126, 120.3731382 31.3479175)</data>
+</edge>
+<edge source="9538929657" target="9538929655" id="0">
+  <data key="d8">24451029</data>
+  <data key="d9">primary</data>
+  <data key="d10">太湖大道</data>
+  <data key="d11">False</data>
+  <data key="d12">True</data>
+  <data key="d13">24.81008970123062</data>
+</edge>
+<edge source="9538929657" target="5133000167" id="0">
+  <data key="d8">24451029</data>
+  <data key="d9">primary</data>
+  <data key="d10">太湖大道</data>
+  <data key="d11">False</data>
+  <data key="d12">False</data>
+  <data key="d13">241.2079417667923</data>
+  <data key="d14">LINESTRING (120.3731382 31.3479175, 120.3737557 31.3478236, 120.3744982 31.3477802, 120.3752464 31.3477514, 120.375666 31.3477507)</data>
+</edge>
+<edge source="9538929657" target="9538929656" id="0">
+  <data key="d8">1035501510</data>
+  <data key="d9">footway</data>
+  <data key="d11">False</data>
+  <data key="d12">False</data>
+  <data key="d13">24.561705503690128</data>
+  <data key="d14">LINESTRING (120.3731382 31.3479175, 120.3731607 31.3480126, 120.3731724 31.3480619, 120.3731895 31.348134)</data>
+</edge>
+<edge source="9538929658" target="13616200911" id="0">
+  <data key="d8">97414915</data>
+  <data key="d9">primary</data>
+  <data key="d10">太湖大道</data>
+  <data key="d11">False</data>
+  <data key="d12">False</data>
+  <data key="d13">46.85593566786947</data>
+</edge>
+<edge source="9538929658" target="9538929654" id="0">
+  <data key="d8">97414915</data>
+  <data key="d9">primary</data>
+  <data key="d10">太湖大道</data>
+  <data key="d11">False</data>
+  <data key="d12">True</data>
+  <data key="d13">29.23054231024846</data>
+</edge>
+<edge source="9538929658" target="2505958524" id="0">
+  <data key="d8">1035501511</data>
+  <data key="d9">footway</data>
+  <data key="d11">False</data>
+  <data key="d12">True</data>
+  <data key="d13">24.993602948979728</data>
+  <data key="d14">LINESTRING (120.372631 31.3482227, 120.372612 31.3481499, 120.3725992 31.3481006, 120.3725738 31.3480033)</data>
+</edge>
+<edge source="13616182375" target="13616200924" id="0">
+  <data key="d8">1035501508</data>
+  <data key="d9">unclassified</data>
+  <data key="d11">False</data>
+  <data key="d12">False</data>
+  <data key="d13">14.586287272953316</data>
+</edge>
+<edge source="13616182375" target="13616200911" id="0">
+  <data key="d8">[1485164304, 1485164305, 1485164306]</data>
+  <data key="d9">secondary</data>
+  <data key="d11">False</data>
+  <data key="d12">True</data>
+  <data key="d13">966.6272779326877</data>
+  <data key="d15">yes</data>
+  <data key="d14">LINESTRING (120.3721753 31.3569856, 120.3721717 31.3569146, 120.372131 31.356291, 120.3721041 31.3559235, 120.3720707 31.3554128, 120.3720103 31.3538577, 120.3720017 31.3521588, 120.3720017 31.3511343, 120.3720362 31.3500876, 120.3721457 31.3482988)</data>
+</edge>
+<edge source="13616200911" target="8336327978" id="0">
+  <data key="d8">97414915</data>
+  <data key="d9">primary</data>
+  <data key="d10">太湖大道</data>
+  <data key="d11">False</data>
+  <data key="d12">False</data>
+  <data key="d13">19.436280950421637</data>
+</edge>
+<edge source="13616200911" target="9538929658" id="0">
+  <data key="d8">97414915</data>
+  <data key="d9">primary</data>
+  <data key="d10">太湖大道</data>
+  <data key="d11">False</data>
+  <data key="d12">True</data>
+  <data key="d13">46.85593566786947</data>
+</edge>
+<edge source="13616200911" target="13616182375" id="0">
+  <data key="d8">[1485164304, 1485164305, 1485164306]</data>
+  <data key="d9">secondary</data>
+  <data key="d11">False</data>
+  <data key="d12">False</data>
+  <data key="d13">966.6272779326877</data>
+  <data key="d15">yes</data>
+  <data key="d14">LINESTRING (120.3721457 31.3482988, 120.3720362 31.3500876, 120.3720017 31.3511343, 120.3720017 31.3521588, 120.3720103 31.3538577, 120.3720707 31.3554128, 120.3721041 31.3559235, 120.372131 31.356291, 120.3721717 31.3569146, 120.3721753 31.3569856)</data>
+</edge>
+<edge source="13616200924" target="13616182375" id="0">
+  <data key="d8">1035501508</data>
+  <data key="d9">unclassified</data>
+  <data key="d11">False</data>
+  <data key="d12">True</data>
+  <data key="d13">14.586287272953316</data>
+</edge>
+<edge source="13616200924" target="8336327978" id="0">
+  <data key="d8">[1485164296, 1485164297, 896835024]</data>
+  <data key="d9">secondary</data>
+  <data key="d11">False</data>
+  <data key="d12">False</data>
+  <data key="d13">960.7790896381945</data>
+  <data key="d15">yes</data>
+  <data key="d14">LINESTRING (120.3720235 31.3569655, 120.3720123 31.3568175, 120.3719727 31.3562716, 120.3719488 31.3558965, 120.3719103 31.3550664, 120.3718832 31.3539402, 120.3718713 31.3528667, 120.3718626 31.3518826, 120.3718373 31.3514193, 120.3718359 31.3508374, 120.3718676 31.350182, 120.3719111 31.3493252, 120.3719482 31.3484989, 120.3719444 31.3483304)</data>
+</edge>
+</graph></graphml>

@@ -1,0 +1,15 @@
+# 云端部署（Streamlit Community Cloud）用依赖
+#
+# 为什么这里没有 geopandas / osmnx / shapely：
+#   那几个体积大、编译慢，只在**本地**抓取或重建校区底图时用到。
+#   地图渲染读的是已经抓好的 data/raw/*.geojson（纯文本解析，不需要它们），
+#   所以云端只要能跑 Streamlit 就够了 —— 部署快很多。
+#
+# 本地开发/需要重抓底图时，再额外装：
+#       pip install -r requirements-local.txt
+
+streamlit>=1.30
+streamlit-folium>=0.18
+folium>=0.15
+pillow>=10.0
+requests>=2.28

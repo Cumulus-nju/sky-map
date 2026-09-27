@@ -1,0 +1,7 @@
+# Streamlit 配置：避免首次运行停下来问邮箱、关掉使用统计
+# 有了这个文件，「启动投稿页.bat」就不会卡在 Email: 提示上。
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

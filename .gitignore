@@ -1,0 +1,26 @@
+# 别把投稿数据和照片推上 GitHub（体积大，且含同学个人信息）
+data/photos/
+data/thumbs/
+data/exports/
+data/submissions.jsonl
+data/admin.json
+data/.submit.lock
+data/tile_check/
+
+# 云端密钥绝不入库
+.streamlit/secrets.toml
+deploy/secrets.toml
+.env
+
+# 打包产物
+dist/
+*.zip
+
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# 注意：data/raw/ 要保留并提交 —— 那是三校区底图，地图没它就没有建筑轮廓。
