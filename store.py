@@ -319,7 +319,7 @@ class SupabaseStore(Store):
         rows = self._get(TABLE_PHOTOS, {"select": column, "id": f"eq.{_safe_id(ref)}", "limit": 1})
         if not rows:
             return None
-        val = self._get_one(rows[0], column)
+        val = self.get_one(rows[0], column)
         if not val:
             return None
         try:
