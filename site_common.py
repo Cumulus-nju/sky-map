@@ -72,6 +72,30 @@ def nav(current: str) -> None:
                              help="审核、修改、删除投稿")
     st.sidebar.divider()
     st.sidebar.caption(f"当前位置：**{current}**")
+    _storage_badge()
+
+
+def _storage_badge() -> None:
+    """在侧边栏显示当前存储后端 —— 一眼看出云端有没有接上数据库。
+
+    为什么需要它：没配 SUPABASE_URL/KEY 时会静默退回本地文件存储，
+    而云端容器重启就清空文件系统，同学投的稿会全部丢失。这个徽标让
+    "没接上数据库"变成可见状态，而不是等到丢稿才发现。
+    """
+    try:
+        from store import storage_kind
+
+        kind = storage_kind()
+    except Exception:
+        return
+    if kind == "supabase":
+        st.sidebar.caption("🗄 存储：Supabase 云端（投稿持久保存）")
+    else:
+        st.sidebar.warning(
+            "⚠️ 当前为**本地临时存储**：服务器重启会清空所有投稿！\n\n"
+            "请在应用设置里配置 Supabase 的 `SUPABASE_URL` / `SUPABASE_KEY`。",
+            icon="🗄",
+        )
 
 
 def demo_mode() -> bool:
