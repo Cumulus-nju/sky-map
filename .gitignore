@@ -24,3 +24,6 @@ __pycache__/
 venv/
 
 # 注意：data/raw/ 要保留并提交 —— 那是三校区底图，地图没它就没有建筑轮廓。
+
+# 苏州配准校准用的临时底图缓存（体积大、可再生）
+data/tile_check/suzhou_base_*.jpg
