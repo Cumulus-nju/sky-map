@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 
@@ -32,6 +33,10 @@ class Campus:
     bbox: tuple[float, float, float, float]
     streets: TileSource                 # 默认街道底图
     imagery: TileSource                 # 卫星影像底图
+    # (south, west, north, east) —— 地图上的"外框"：校园 + 周边一圈缓冲。
+    # 长宽比按各校区实际形状自适应；地图视野被锁在这个框内（只可放大、不可缩出）。
+    # 生成/校验方法见 tools/compute_frames.py。空元组时退回 bbox。
+    frame: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
     landmarks: dict[str, tuple[float, float]] = field(default_factory=dict)
     # 手编地标坐标精度：exact=实测（OSM），approx=依卫星影像估算、待校准
     landmark_accuracy: str = "exact"
@@ -70,9 +75,11 @@ CAMPUSES: dict[str, Campus] = {
         key="gulou",
         name="南京大学鼓楼校区",
         short="鼓楼",
-        center=(32.0566, 118.7736),
-        zoom=17,
+        center=(32.056942, 118.774419),
+        zoom=16,
         bbox=(32.051019, 118.767759, 32.062262, 118.779466),
+        # 校园建筑实测外接范围 (1250 × 1419 m) 四周各留 150 m 缓冲
+        frame=(32.049223, 118.766207, 32.064661, 118.782631),
         streets=OSM_STREET,
         imagery=AMAP_SAT,
         landmarks={
@@ -101,9 +108,11 @@ CAMPUSES: dict[str, Campus] = {
         key="xianlin",
         name="南京大学仙林校区",
         short="仙林",
-        center=(32.1197, 118.9530),
-        zoom=15,
+        center=(32.119850, 118.954632),
+        zoom=16,
         bbox=(32.110178, 118.94453, 32.129306, 118.961756),
+        # 校园建筑实测外接范围 (1639 × 2191 m) 四周各留 150 m 缓冲
+        frame=(32.108661, 118.944348, 32.131039, 118.964916),
         streets=OSM_STREET,
         imagery=AMAP_SAT,
         landmarks={
@@ -142,9 +151,14 @@ CAMPUSES: dict[str, Campus] = {
         key="suzhou",
         name="南京大学苏州校区",
         short="苏州",
-        center=(31.3532, 120.3794),
-        zoom=16,
+        center=(31.3532, 120.3810),
+        zoom=15,
         bbox=(31.34695, 120.371035, 31.359362, 120.387796),
+        # ⚠ OSM 无建筑数据，此框由卫星影像人工标定
+        # （2026-10-01，依据 data/tile_check/suzhou_landmark_check.png）：
+        # 覆盖东西两侧建筑群 + 校园湖 + 南北门，约 2400 × 2200 m。
+        # 换底图或发现偏移时，用 tools/compute_frames.py 或校准台重新标定。
+        frame=(31.343319, 120.368377, 31.363081, 120.393623),
         streets=OSM_STREET,
         imagery=AMAP_SAT,
         landmarks={
@@ -197,3 +211,59 @@ def all_keys() -> list[str]:
 def in_bbox(key: str, lat: float, lon: float, pad: float = 0.0) -> bool:
     s, w, n, e = campus(key).bbox
     return (s - pad) <= lat <= (n + pad) and (w - pad) <= lon <= (e + pad)
+
+
+# ---------------------------------------------------------------- 地图外框
+#
+# 投稿页和成品地图上那个方框 = frame，不是 bbox。
+# 区别：bbox 是手校的"校园大致范围"（偏紧，鼓楼/仙林东西两侧曾把建筑切在框外），
+# frame 是"校园全部建筑 + 周边缓冲"，长宽比按各校区实际形状来。
+# 地图视野锁定在 frame 内：只能往里放大，不能缩出去看到一大片无关区域。
+
+
+def frame_of(key: str) -> tuple[float, float, float, float]:
+    """取校区外框 (S, W, N, E)。没配 frame 时退回 bbox。"""
+    cfg = campus(key)
+    if cfg.frame and cfg.frame != (0.0, 0.0, 0.0, 0.0):
+        return cfg.frame
+    return cfg.bbox
+
+
+def in_frame(key: str, lat: float, lon: float, pad_m: float = 0.0) -> bool:
+    """点是否落在外框内（pad_m 为额外放宽的米数）。"""
+    s, w, n, e = frame_of(key)
+    dlat = pad_m / 111320.0
+    dlon = pad_m / (111320.0 * math.cos(math.radians((s + n) / 2)))
+    return (s - dlat) <= lat <= (n + dlat) and (w - dlon) <= lon <= (e + dlon)
+
+
+def frame_size_m(key: str) -> tuple[float, float]:
+    """外框实际尺寸 (东西向米数, 南北向米数)。"""
+    s, w, n, e = frame_of(key)
+    return (
+        (e - w) * 111320.0 * math.cos(math.radians((s + n) / 2)),
+        (n - s) * 111320.0,
+    )
+
+
+def min_zoom_for_frame(key: str, view_w: float = 1000.0, view_h: float = 460.0) -> int:
+    """算"刚好把外框装进视口"的缩放级，作为地图可缩到的最小级。
+
+    推导：Web Mercator 在缩放 0 时，1 像素 = 156543.03392·cos(lat) 米。
+    缩放 z 时每像素代表 (156543.03392·cos(lat)) / 2^z 米，所以
+    外框在缩放 z 下占的像素数 = 框宽(米) · 2^z / (156543.03392·cos(lat))。
+    令它等于视口尺寸，解出 z；宽高两个方向取较小者（都装得下）。
+    """
+    w_m, h_m = frame_size_m(key)
+    if w_m <= 0 or h_m <= 0:
+        return 12
+    # 允许把框再往外缩 15%，这样略大于框的视野也看得见（否则会紧到有点憋）
+    w_m *= 1.15
+    h_m *= 1.15
+    lat = campus(key).center[0]
+    # 缩放 0 时，外框占多少像素
+    px0 = 156543.03392 * math.cos(math.radians(lat))
+    w_px0 = w_m / px0
+    h_px0 = h_m / px0
+    zoom = math.log2(min(view_w / w_px0, view_h / h_px0))
+    return max(11, min(18, int(math.floor(zoom))))

@@ -21,7 +21,7 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from campus_config import CAMPUSES
+from campus_config import CAMPUSES, frame_of, frame_size_m
 from submission_data import (
     EXPORTS,
     HERE,
@@ -232,6 +232,9 @@ def build_payload(subs: list[Submission], *, embed_photos: bool,
             k: {
                 "key": k, "name": c.name, "short": c.short,
                 "center": list(c.center), "zoom": c.zoom, "bbox": list(c.bbox),
+                # 地图外框：校园 + 周边缓冲，视野锁定在此框内（只可放大、不可缩出）
+                "frame": list(frame_of(k)),
+                "frameSize": list(frame_size_m(k)),
                 "streets": tile_cfg(c.streets), "imagery": tile_cfg(c.imagery),
                 # 高德图层需要的 GCJ-02 纠偏量（米），EPSG:3857 平面
                 "offsets": {
@@ -483,6 +486,7 @@ function initMap(){
   map = L.map('map', {zoomControl:true, minZoom:3, maxZoom:19, preferCanvas:false})
           .setView(c.center, c.zoom);
   L.control.scale({imperial:false, position:'bottomleft'}).addTo(map);
+  applyFrame('gulou');
   buildVectorLayer();
   applyHash();
 }
@@ -491,6 +495,45 @@ function cfgOf(ck){ return DATA.campuses[ck === 'all' ? 'gulou' : ck]; }
 function offsetOf(which){
   const o = (cfgOf(currentCampus).offsets || {})[which] || [0, 0];
   return { x: o[0], y: o[1] };
+}
+
+/* ---------------- 外框（校园 + 周边缓冲）----------------
+   框由后端按各校区实际建筑范围算出（aspect 自适应），这里只负责：
+     1) 取框的四角；2) 画出来；3) 把视野锁进框内。            */
+function frameOf(ck){
+  const c = DATA.campuses[ck];
+  if(c && c.frame && c.frame.length === 4 && c.frame[2] > c.frame[0]) return c.frame;
+  return c ? c.bbox : null;
+}
+/* 框的内接矩形：整框能装进视口时的最大缩放级。
+   比这级再缩出去，框就不满屏了 —— 也就是"不能缩出框"。
+   推导：Web Mercator 缩放 0 时 1px = 156543.03392·cos(lat) 米，
+   所以缩放 z 时框占的像素 = 框米数 · 2^z / (156543.03392·cos(lat))。 */
+function frameFitZoom(ck){
+  const f = frameOf(ck); if(!f) return 3;
+  const lat = (f[0] + f[2]) / 2;
+  const px0 = 156543.03392 * Math.cos(lat * Math.PI / 180);   // 缩放0时 1px 多少米
+  const sz = DATA.campuses[ck].frameSize;
+  const wM = sz ? sz[0] : (f[3]-f[1]) * 111320 * Math.cos(lat*Math.PI/180);
+  const hM = sz ? sz[1] : (f[2]-f[0]) * 111320;
+  const box = document.getElementById('map');
+  const vw = (box ? box.clientWidth : 0) || 900;
+  const vh = (box ? box.clientHeight : 0) || 700;
+  const zoom = Math.log2(Math.min(vw / (wM / px0), vh / (hM / px0)));
+  return Math.max(3, Math.min(18, Math.floor(zoom)));
+}
+/* 把视野锁进外框。maxBoundsViscosity=1 → 边界是硬的，不会弹性回弹。 */
+function applyFrame(ck){
+  const f = frameOf(ck); if(!f) return;
+  const b = L.latLngBounds([[f[0], f[1]], [f[2], f[3]]]);
+  map.setMaxBounds(b.pad(0.02));
+  map.options.maxBoundsViscosity = 1.0;
+  map.setMinZoom(frameFitZoom(ck));
+}
+function frameRect(ck){
+  const f = frameOf(ck); if(!f) return null;
+  return L.rectangle([[f[0], f[1]], [f[2], f[3]]],
+    {color:'#4a9eff', weight:1.5, dashArray:'7 5', fill:false, interactive:false});
 }
 
 /* 点位坐标变换：底图是高德（GCJ-02）时，把 WGS84 的点平移过去，
@@ -597,9 +640,12 @@ function buildVectorLayer(){
   const all = currentCampus === 'all' ? Object.keys(DATA.buildings) : [currentCampus];
   all.forEach(ck => {
     const cfg = DATA.campuses[ck];
-    const b = cfg.bbox;
-    L.rectangle([mv(b[0], b[1]), mv(b[2], b[3])],
-      {color:'#1d3350',weight:1,fillColor:'#0e1a2b',fillOpacity:0.55,interactive:false}).addTo(vectorLayer);
+    // 深色块表示校区外框范围；OSM 无建筑数据的校区（苏州）靠它和地标定位
+    const fr = frameOf(ck);
+    if(fr){
+      L.rectangle([mv(fr[0], fr[1]), mv(fr[2], fr[3])],
+        {color:'#1d3350',weight:1,fillColor:'#0e1a2b',fillOpacity:0.55,interactive:false}).addTo(vectorLayer);
+    }
     (DATA.buildings[ck]||[]).forEach(bd => {
       const n = parseInt(bd.levels||'0',10) || (parseFloat(bd.height||'0')/3.3|0) || 3;
       const h = Math.max(0, Math.min(1, n/30));
@@ -847,12 +893,25 @@ function renderNote(){ const n = el('note'); if(n && !tracking) n.innerHTML = no
 
 function fitAll(){
   if(currentCampus === 'all'){
-    const pts = selSpots.length ? selSpots.map(s=>[s.lat,s.lon]) : Object.values(DATA.campuses).map(c=>c.center);
-    map.fitBounds(L.latLngBounds(pts).pad(0.3));
+    // 三个校区的外框合起来 —— 视野锁在这三个框的总范围里，缩不到更远
+    const boxes = Object.keys(DATA.campuses).map(k => frameOf(k)).filter(Boolean);
+    if(boxes.length){
+      const latlngs = [];
+      boxes.forEach(f => { latlngs.push([f[0],f[1]]); latlngs.push([f[2],f[3]]); });
+      const b = L.latLngBounds(latlngs);
+      map.setMaxBounds(b.pad(0.02));
+      map.options.maxBoundsViscosity = 1.0;
+      map.fitBounds(b.pad(0.05));
+      map.setMinZoom(map.getZoom());
+    } else {
+      const pts = selSpots.length ? selSpots.map(s=>[s.lat,s.lon]) : Object.values(DATA.campuses).map(c=>c.center);
+      map.fitBounds(L.latLngBounds(pts).pad(0.3));
+    }
     return;
   }
   const c = cfgOf(currentCampus);
-  map.setView(tp(c.center[0], c.center[1]), Math.min(c.zoom, 17), {animate:false});
+  applyFrame(currentCampus);
+  map.setView(tp(c.center[0], c.center[1]), Math.max(frameFitZoom(currentCampus), Math.min(c.zoom, 17)), {animate:false});
 }
 
 /* 切换校区：侧栏与悬浮条共用 */
@@ -864,7 +923,13 @@ function switchCampus(key){
   dropTiles();
   buildVectorLayer();
   setBase(baseLayer === 'none' ? (OFFLINE ? 'vector' : (fellBack ? 'vector' : 'street')) : baseLayer);
-  if(baseLayer !== 'none') map.setZoom(cfgOf(currentCampus).zoom, {animate:false});
+  if(baseLayer !== 'none'){
+    if(key === 'all'){ fitAll(); }
+    else {
+      applyFrame(key);
+      map.setZoom(Math.max(frameFitZoom(key), cfgOf(key).zoom), {animate:false});
+    }
+  }
   render(); syncHash(); renderNote();
 }
 

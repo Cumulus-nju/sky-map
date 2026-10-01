@@ -173,6 +173,7 @@ sky_map/
 │   ├── photos/ thumbs/  原图与缩略图
 │   └── exports/         地图与 CSV 产物
 └── tools/               校验、测试、迁移脚本
+    └── compute_frames.py   ★地图外框（frame）重算与校验
 ```
 
 ---
@@ -190,11 +191,13 @@ python tools/migrate_to_supabase.py      # 把本地投稿搬到云端
 python tools/check_tiles.py              # 瓦片源可用性实测（拼图对比）
 python tools/verify_align.py             # 像素级校验 GCJ-02 纠偏是否对准
 python tools/gcj_offset.py               # 打印三校区偏移量
+python tools/compute_frames.py --verify  # 校验地图外框（frame）配置
 ```
 
 `tools/*.mjs` 是无头浏览器复验（需 Node）：`cdp_check.mjs` 抓控制台报错与截图、
 `cdp_basemap.mjs` 切换底图截图、`cdp_markers.mjs` 检查点位落位、
-`cdp_measure.mjs` 量嵌入地图的实际尺寸。
+`cdp_measure.mjs` 量嵌入地图的实际尺寸、
+`cdp_frame_check.mjs` 验外框与视野锁定、`cdp_submit_frame.mjs` 验投稿页内嵌地图。
 
 ---
 
@@ -219,9 +222,45 @@ python tools/gcj_offset.py               # 打印三校区偏移量
    征稿期并发不高，实际没问题；真要高并发得改成逐条写库。
 5. **示例数据是合成图**：`demo_*` 仅为演示，正式征稿前跑 `python reset_data.py` 清掉。
 6. **免费层会休眠**：Streamlit Cloud 的应用长时间没人访问会睡，下次打开要等约 30 秒唤醒。
-通过（Streamlit Cloud + Supabase）后，云端站点与本地一致。
+   接上 Supabase（Streamlit Cloud + Supabase）后，云端站点与本地一致。
+7. **地图视野锁在 frame 内**：只能往里放大、缩不出去。视口比框"扁"时，
+   横向仍会露出框外一点（几何上无法避免）。手机等窄屏会把最小缩放级算得更小，
+   也就是能多缩一点 —— 宁可留余量，也不要让同学被卡住。
+8. **苏州的 frame 是人工标定的**：含东侧厂区/园区，见下方「地图外框」一节。
 
-## 苏州校区配准问题（2026-09-28 结论：不做）
+## 十二、地图外框（frame）：校园 + 周边，视野锁定
+
+投稿页和成品地图上那个方框 = 每个校区的 `frame` 配置，**不是** `bbox`：
+
+| | 是什么 | 用途 |
+|---|---|---|
+| `bbox` | 手校的"校园大致范围"，偏紧 | 只用于判断落点是否可疑（待复核） |
+| `frame` | **校园全部建筑 + 四周 150 m 缓冲**，长宽比按各校区实际形状自适应 | 画方框 + **锁定地图视野**：只能往里放大，缩不出去 |
+
+| 校区 | frame 尺寸 | 长宽比 | 依据 |
+|---|---|---|---|
+| 鼓楼 | 1550 × 1719 m | 0.902 | OSM 298 栋建筑实测范围 + 150 m |
+| 仙林 | 1939 × 2491 m | 0.778 | OSM 297 栋建筑实测范围 + 150 m |
+| 苏州 | 2400 × 2200 m | 1.091 | ⚠ OSM 无建筑数据，依卫星影像人工标定 |
+
+> **为什么改**：老 `bbox` 是手估的，鼓楼西侧切掉 4 m、东侧切掉 149 m，
+> 仙林西侧切掉 133 m、东侧切掉 148 m —— 同学正常站在校园里点选会被**误标「待复核」**。
+
+重算 / 校验：
+
+```powershell
+python tools\compute_frames.py            # 按建筑实测范围打印建议值
+python tools\compute_frames.py --verify   # 校验：框必须包住全部建筑
+python tools\compute_frames.py --pad 200  # 换缓冲宽度
+```
+
+> ⚠ **苏州这个框是人工标定的**：影像上看校园建筑群大致落在 120.371~120.387，
+> 当前框的东界取到 120.3936，会把东侧的厂区/园区一并包含进来。
+> 这是**有意保留**的（2026-10-01 用户确认）。核对图见
+> `data/tile_check/suzhou_frame_check.png`（外框+地标全景）、
+> `suzhou_frame_crop.png`（框内放大）、`suzhou_east_edge.png`（东界带经度刻度）。
+
+## 十三、苏州校区配准问题（2026-09-28 结论：不做）
 
 `Desktop\南苏建模数据_备用\` 里有南大苏州校区的 CFD 建模数据：
 935 个精确建筑足迹（来自资产处《苏州校区平面图》2024-03），几何质量很高。

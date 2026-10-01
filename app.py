@@ -24,7 +24,12 @@ import site_common as S
 
 S.setup("投稿", "🌤")
 
-from campus_config import CAMPUSES, campus as get_campus  # noqa: E402
+from campus_config import (  # noqa: E402
+    CAMPUSES,
+    campus as get_campus,
+    frame_of,
+    min_zoom_for_frame,
+)
 from photos import make_thumb_bytes, parse_shot_time, read_exif  # noqa: E402
 from submission_data import (  # noqa: E402
     DATA,
@@ -98,7 +103,24 @@ def save_photo(upload) -> tuple[str, str]:
 
 def render_map(campus_key: str, picked: tuple[float, float] | None):
     cfg = get_campus(campus_key)
-    m = folium.Map(location=list(cfg.center), zoom_start=cfg.zoom, tiles=None, control_scale=True)
+    fs, fw, fn, fe = frame_of(campus_key)
+    # 视口宽高参考值：用浏览器实测的 st_folium 嵌入尺寸（高 460 是下面传的）
+    min_z = min_zoom_for_frame(campus_key, view_w=914, view_h=460)
+    m = folium.Map(
+        location=list(cfg.center),
+        zoom_start=cfg.zoom,
+        tiles=None,
+        control_scale=True,
+        # 把视野锁进外框：只能往里放大，缩不出去；maxBoundsViscosity=1 让边界变硬
+        # （不加的话 Leaflet 在拖到边界时会弹性回弹，看着像"卡住"）
+        min_lat=fs, max_lat=fn, min_lon=fw, max_lon=fe,
+        max_bounds=True,
+        maxBoundsViscosity=1.0,
+        # ⚠ 必须用 minZoom 而不是 min_zoom：folium 的 min_zoom 只作用于瓦片图层，
+        # 不会写进 L.map 的 options，地图照样能缩到 z=0 看到整个东亚。
+        minZoom=min_z,
+        zoomControl=True,
+    )
 
     def add_tile(src, name, show):
         kw = dict(name=name, max_zoom=src.max_zoom, attr=src.attr, show=show, control=True)
@@ -111,11 +133,10 @@ def render_map(campus_key: str, picked: tuple[float, float] | None):
     # 卫星影像仅作参考 —— 高德是 GCJ-02，未纠偏，别用它对准机位
     add_tile(cfg.imagery, cfg.imagery.name + "（仅参考，有坐标偏移）", False)
 
-    # 校区范围
-    s, w, n, e = cfg.bbox
+    # 外框：校园 + 周边缓冲。点击请落在框内，框外会被标为「待复核」
     folium.Rectangle(
-        bounds=[[s, w], [n, e]], color="#2f6fb5", weight=1.2, fill=False, dash_array="4 4",
-        tooltip="校区大致范围：落点请放在框内",
+        bounds=[[fs, fw], [fn, fe]], color="#2f6fb5", weight=1.6, fill=False, dash_array="6 4",
+        tooltip="可拍摄范围：校园及周边一圈。点框外会被标为「待复核」",
     ).add_to(m)
 
     # 已知地标，方便同学对准
@@ -158,6 +179,7 @@ def main() -> None:
     )
     st.caption(
         "在地图上**点一下**你拍照站的位置（越准越好）；点错了再点一次即可覆盖。"
+        "蓝框是**校园及周边**范围，点在里面就对了。"
         "请用默认的**街道底图**对准（卫星影像有坐标偏移，仅供看地形）。"
     )
 

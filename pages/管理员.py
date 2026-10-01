@@ -24,7 +24,7 @@ import site_common as S  # noqa: E402
 
 S.setup("管理后台", "🔧")
 
-from campus_config import CAMPUSES  # noqa: E402
+from campus_config import CAMPUSES, frame_of  # noqa: E402
 from submission_data import (  # noqa: E402
     delete_submission,
     load_submissions,
@@ -123,9 +123,12 @@ def spot_picker(key_prefix: str, campus_key: str, init: tuple[float, float]):
     m = folium.Map(location=center, zoom_start=cfg.zoom + 1, tiles=None, control_scale=True)
     folium.TileLayer(tiles=cfg.streets.url, attr=cfg.streets.attr,
                      name=cfg.streets.name, max_zoom=cfg.streets.max_zoom).add_to(m)
-    s_, w_, n_, e_ = cfg.bbox
+    # 外框（校园 + 周边）画出来供参考，但不锁视野 ——
+    # 管理员校正落点时可能要拖到框外，别把自由度锁死。
+    s_, w_, n_, e_ = frame_of(campus_key)
     folium.Rectangle(bounds=[[s_, w_], [n_, e_]], color="#2f6fb5", weight=1,
-                     fill=False, dash_array="4 4").add_to(m)
+                     fill=False, dash_array="4 4",
+                     tooltip="校园及周边范围（参考）").add_to(m)
     for nm, (la, lo) in cfg.landmarks.items():
         folium.CircleMarker([la, lo], radius=3, color="#e0713c", weight=2,
                             fill=True, fill_color="#fff", fill_opacity=1, tooltip=nm).add_to(m)
