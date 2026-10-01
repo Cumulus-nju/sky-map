@@ -24,7 +24,16 @@ import site_common as S  # noqa: E402
 
 S.setup("管理后台", "🔧")
 
-from campus_config import CAMPUSES, frame_of  # noqa: E402
+try:
+    from campus_config import CAMPUSES, frame_of  # noqa: E402
+except Exception:  # pragma: no cover - 仅云端模块状态异常时走到
+    import campus_config as _cfg
+
+    CAMPUSES = _cfg.CAMPUSES
+
+    def frame_of(key):  # type: ignore[misc]
+        c = _cfg.campus(key)
+        return c.frame if c.frame and tuple(c.frame) != (0.0, 0.0, 0.0, 0.0) else c.bbox
 from submission_data import (  # noqa: E402
     delete_submission,
     load_submissions,

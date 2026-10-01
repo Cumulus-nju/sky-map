@@ -27,3 +27,11 @@ venv/
 
 # 苏州配准校准用的临时底图缓存（体积大、可再生）
 data/tile_check/suzhou_base_*.jpg
+
+# 截图/校验产生的临时图片（别误提交）
+_live.png
+_live_verify.png
+_frame_shot.png
+_submit_shot.png
+_iso_shot.png
+_page_*.png

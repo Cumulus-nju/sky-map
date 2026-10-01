@@ -24,6 +24,10 @@ SUBMIT_PAGE = "投稿"
 MAP_PAGE = "打卡点地图"
 ADMIN_PAGE = "管理员"
 
+# 构建版本：显示在侧边栏，用来确认线上部署的是哪一版。
+# 改代码时**一起改这个**，push 后刷新线上即可确认是否真的更新了。
+BUILD = "2026-10-01b"
+
 # 页面文件（Streamlit 按文件路由：根目录 app.py = "/"，pages/ 下的各占一个路径）
 SUBMIT_FILE = "app.py"
 MAP_FILE = "pages/打卡点地图.py"
@@ -72,6 +76,7 @@ def nav(current: str) -> None:
                              help="审核、修改、删除投稿")
     st.sidebar.divider()
     st.sidebar.caption(f"当前位置：**{current}**")
+    st.sidebar.caption(f"构建版本 `{BUILD}`")
     _storage_badge()
 
 
