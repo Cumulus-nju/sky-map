@@ -25,6 +25,13 @@ import frame_picker  # noqa: E402
 import static_basemap as sb  # noqa: E402
 from frame_util import frame_of  # noqa: E402
 
+# 跑之前先给正式缓存目录拍个快照 —— 结束时把所有"新增"文件删掉（见文件末尾）。
+# 这样测试不会往仓库里留任何中间产物，也不用依赖 gitignore。
+try:
+    _CACHE_BEFORE = {p.name for p in sb.IMAGE_CACHE.iterdir() if p.is_file()}
+except Exception:
+    _CACHE_BEFORE = set()
+
 FAILS: list[str] = []
 
 
@@ -232,20 +239,21 @@ except Exception as exc:
 print("\n" + "=" * 66)
 # 清理测试自己生成的中间产物。
 #
-# 为什么必须清：这些测试用 `target_width=700` 生成底图，会落到正式缓存目录
-# `data/frame_images/` 里。之前没清，结果每次跑测试都往仓库里塞一批小尺寸副本
-# （还因为"已被跟踪 ⇒ gitignore 对它们无效"而清不掉，很烦）。
-# 测试产物就该由测试自己收尾。
-TEST_WIDTHS = (600, 700)
-_removed = 0
+# 为什么必须清：测试会用 `target_width=600/700` 生成底图，落到**正式**缓存目录
+# `data/frame_images/` 里。之前没清，每跑一次就往仓库塞一批小尺寸副本。
+#
+# 做法用"快照对比"而不是按文件名匹配：本脚本开头记录了目录内容，
+# 这里把所有**新增**文件删掉 —— 不管它叫什么名字、多少种尺寸，都不会漏。
+# （试过用 .gitignore 兜底，但对这类文件并不生效，靠不住。）
+_new = []
 try:
-    for w in TEST_WIDTHS:
-        for p in sb.IMAGE_CACHE.glob(f"*_w{w}_*"):
+    for p in sb.IMAGE_CACHE.iterdir():
+        if p.is_file() and p.name not in _CACHE_BEFORE:
             p.unlink(missing_ok=True)
-            _removed += 1
-except Exception:
-    pass
-print(f"（已清理测试产物 {_removed} 个文件）")
+            _new.append(p.name)
+except Exception as exc:
+    print(f"⚠ 清理测试产物失败：{type(exc).__name__}: {exc}")
+print(f"（已清理测试产物 {len(_new)} 个文件：{', '.join(sorted(_new)) or '无'}）")
 
 if FAILS:
     print(f"✗ {len(FAILS)} 项失败：" + "、".join(FAILS))
