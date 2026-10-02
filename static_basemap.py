@@ -66,6 +66,24 @@ GOOGLE_SAT = "https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}"
 GOOGLE_SUBDOMAINS = "0123"
 
 DEFAULT_TILE_KEY = "osm"
+
+# ---------------------------------------------------------------- 底图源配置
+#
+# 每个校区用"自绘矢量底图"还是"瓦片拼接"。**显式写死**，不用自动判断 ——
+# 自动判断会踩坑：苏州的 vector_*.geojson 也存在（道路/水体），但**建筑数据几乎为空**
+# （OSM 在苏州只有 23 栋），自绘画出来会明显比瓦片更空、更难看。
+# 所以"文件存在"不等于"适合自绘"，这里按校区明确指定。
+#
+# 2026-10-02：用户要求苏州**先别做、后面另行处理**，因此苏州保持瓦片。
+BASEMAP_SOURCE: dict[str, str] = {
+    "gulou": "vector",
+    "xianlin": "vector",
+    "suzhou": "tile",
+}
+
+
+def source_of(campus_key: str) -> str:
+    return BASEMAP_SOURCE.get(campus_key, "tile")
 _LOCK = threading.Lock()
 
 
@@ -444,6 +462,32 @@ def cached_frame_image(campus_key: str, south: float, west: float, north: float,
     except Exception:
         pass
     return img
+
+
+def frame_image_for(campus_key: str, s: float, w: float, n: float, e: float, *,
+                    target_width: int = 1400, prefer: str = "auto", **tile_kwargs) -> FrameImage:
+    """**统一入口**：按校区自动选择"自绘矢量底图"还是"瓦片拼接"。
+
+    prefer:
+        "auto"   —— 按 `BASEMAP_SOURCE` 配置决定（默认）
+        "vector" —— 强制自绘（缺数据会抛错，便于发现问题）
+        "tile"   —— 强制瓦片
+
+    两条路径返回的都是 `FrameImage`，坐标口径完全一致（自检过：图像四角等于外框四角），
+    所以上层（点选组件）完全不用关心底图是怎么来的。
+    """
+    use_vector = prefer == "vector" or (prefer == "auto" and source_of(campus_key) == "vector")
+
+    if use_vector:
+        try:
+            import vector_basemap
+            return vector_basemap.cached_vector_frame(campus_key, s, w, n, e,
+                                                      width=target_width)
+        except Exception:
+            if prefer == "vector":
+                raise
+            # 自绘失败就退回瓦片，别让页面挂掉
+    return cached_frame_image(campus_key, s, w, n, e, target_width=target_width, **tile_kwargs)
 
 
 if __name__ == "__main__":      # 手工生成一下，肉眼看看效果

@@ -179,6 +179,37 @@ try:
 except Exception as exc:
     check("pnav 解析测试", False, f"{type(exc).__name__}: {exc}")
 
+print("\n[7] 自绘矢量底图：坐标口径必须与瓦片路径一致")
+print("     （两条路径返回同一个 FrameImage，点选换算不用区分来源 —— 口径错了就会 '点 A 存 B'）")
+try:
+    import static_basemap as _sb
+
+    for key in CAMPUSES:
+        src = _sb.source_of(key)
+        print(f"  · {key}: 配置源 = {src}")
+        if src != "vector":
+            continue
+        s, w, n, e = frame_of(key)
+        fi = _sb.frame_image_for(key, s, w, n, e, target_width=700)
+        tl = fi.px_to_latlng(0, 0)
+        br = fi.px_to_latlng(fi.width, fi.height)
+        ok_corners = (near(tl[0], n, 2e-3) and near(tl[1], w, 2e-3)
+                      and near(br[0], s, 2e-3) and near(br[1], e, 2e-3))
+        check(f"{key}: 自绘图四角 == 外框四角（容差 2e-3°）", ok_corners,
+              f"左上({tl[0]:.6f},{tl[1]:.6f}) 右下({br[0]:.6f},{br[1]:.6f})")
+        # 往返闭合
+        x0, y0 = fi.latlng_to_px(32.0569, 118.7744) if key == "gulou" else (fi.width / 2, fi.height / 2)
+        lat, lon = fi.px_to_latlng(x0, y0)
+        x1, y1 = fi.latlng_to_px(lat, lon)
+        check(f"{key}: 自绘图换算往返闭合", abs(x1 - x0) < 1e-6 and abs(y1 - y0) < 1e-6,
+              f"Δ=({abs(x1 - x0):.2e},{abs(y1 - y0):.2e}) px")
+        # 与像素换算等价性（同瓦片路径那套自检）
+        rows = frame_picker.assert_js_python_agree(fi, samples=4)
+        worst = max(max(r["dlat"], r["dlon"]) for r in rows)
+        check(f"{key}: 自绘图 JS/Python 换算一致", worst < 1e-9, f"最大差 {worst:.2e}")
+except Exception as exc:
+    check("自绘底图坐标自检", False, f"{type(exc).__name__}: {exc}")
+
 print("\n" + "=" * 66)
 if FAILS:
     print(f"✗ {len(FAILS)} 项失败：" + "、".join(FAILS))

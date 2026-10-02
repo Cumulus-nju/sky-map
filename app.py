@@ -134,8 +134,10 @@ def render_picker(campus_key: str, picked: tuple[float, float] | None):
     fs, fw, fn, fe = frame_of(campus_key)
 
     try:
-        fi = static_basemap.cached_frame_image(
-            campus_key, fs, fw, fn, fe, target_width=1400)
+        # 统一入口：有矢量数据的校区用**自绘底图**（更清晰、配色可控、无瓦片条款问题），
+        # 没有的（如苏州）自动退回瓦片拼接。两条路径坐标口径一致。
+        fi = static_basemap.frame_image_for(
+            campus_key, fs, fw, fn, fe, target_width=2000)
     except Exception as exc:
         # 拼图失败（断网 / 瓦片源限流）不能让投稿页崩掉 —— 退回实时地图并提示
         st.warning(
