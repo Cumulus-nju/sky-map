@@ -230,6 +230,23 @@ except Exception as exc:
     check("预生成底图检查", False, f"{type(exc).__name__}: {exc}")
 
 print("\n" + "=" * 66)
+# 清理测试自己生成的中间产物。
+#
+# 为什么必须清：这些测试用 `target_width=700` 生成底图，会落到正式缓存目录
+# `data/frame_images/` 里。之前没清，结果每次跑测试都往仓库里塞一批小尺寸副本
+# （还因为"已被跟踪 ⇒ gitignore 对它们无效"而清不掉，很烦）。
+# 测试产物就该由测试自己收尾。
+TEST_WIDTHS = (600, 700)
+_removed = 0
+try:
+    for w in TEST_WIDTHS:
+        for p in sb.IMAGE_CACHE.glob(f"*_w{w}_*"):
+            p.unlink(missing_ok=True)
+            _removed += 1
+except Exception:
+    pass
+print(f"（已清理测试产物 {_removed} 个文件）")
+
 if FAILS:
     print(f"✗ {len(FAILS)} 项失败：" + "、".join(FAILS))
     raise SystemExit(1)
