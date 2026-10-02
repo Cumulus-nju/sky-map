@@ -150,7 +150,9 @@ def render_picker(campus_key: str, picked: tuple[float, float] | None):
     doc, height = frame_picker.build_picker_html(
         fi, campus_key=campus_key, display_width=1200, picked=picked,
         nav=S.take_nav(),
-        landmarks=cfg.landmarks,
+        # 不画地标标记：用户明确说"同学们认不得"，标了反而是干扰
+        # （landmarks 里是"北大楼/天文与空间科学学院"这类，不是同学认的路标）。
+        landmarks=None,
         max_display_height=980,
         tip="滚轮缩放 · 左键按住拖动 · 右键选点",
     )

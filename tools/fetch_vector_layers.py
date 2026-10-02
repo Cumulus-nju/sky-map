@@ -81,8 +81,23 @@ def fetch(query: str) -> dict | None:
     return None
 
 
+# 哪些标签意味着"这是个面"（闭合 way 要按面存，否则渲染时会被当折线丢掉）
+_AREA_KEYS = ("landuse", "leisure", "amenity", "building", "area", "man_made",
+              "public_transport")
+_AREA_NATURAL = {"water", "wood", "scrub", "grassland", "wetland", "bare_rock",
+                 "sand", "beach", "heath", "fell"}
+_AREA_WATERWAY = {"riverbank", "dock"}
+
+
 def to_geojson(elements: list) -> dict:
-    """Overpass 的 out geom 结果 -> GeoJSON FeatureCollection。"""
+    """Overpass 的 out geom 结果 -> GeoJSON FeatureCollection。
+
+    ⚠️ 这里有个**必须处理**的坑（2026-10-02 踩过，症状是"地图上只剩建筑"）：
+    `out geom` 对**闭合的 way**（绿地、水面、球场、校园范围）同样返回 `geometry`
+    点列，如果一律当 LineString 存，渲染时的面状图层就全是空的 ——
+    绿地、湖面、山地**一个都画不出来**，只剩建筑（建筑来自另一个文件）。
+    所以闭合 + 带面状标签的 way 要存成 Polygon。
+    """
     feats = []
     for el in elements:
         tags = el.get("tags") or {}
@@ -92,7 +107,16 @@ def to_geojson(elements: list) -> dict:
             coords = [[p["lon"], p["lat"]] for p in el["geometry"]]
             if len(coords) < 2:
                 continue
-            geom = {"type": "LineString", "coordinates": coords}
+            closed = len(coords) >= 4 and coords[0] == coords[-1]
+            looks_area = (
+                any(tags.get(k) for k in _AREA_KEYS)
+                or tags.get("natural") in _AREA_NATURAL
+                or tags.get("waterway") in _AREA_WATERWAY
+            )
+            if closed and looks_area:
+                geom = {"type": "Polygon", "coordinates": [coords]}
+            else:
+                geom = {"type": "LineString", "coordinates": coords}
         else:
             continue
         feats.append({"type": "Feature", "properties": tags, "geometry": geom})

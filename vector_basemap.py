@@ -35,8 +35,9 @@ IMAGE_CACHE = HERE / "data" / "frame_images"
 # 绿地与水面几乎看不出来 —— 地图要好读，层次就得拉开。
 C = {
     "bg":        (242, 238, 229),
-    "green":     (203, 219, 183),
-    "pitch":     (196, 216, 176),
+    "green":     (203, 219, 183),      # 草地/绿地
+    "forest":    (178, 200, 158),      # 树林、山体（更深一档，读得出层次）
+    "pitch":     (196, 216, 176),      # 运动场地
     "sand":      (231, 223, 208),
     "commercial": (234, 228, 217),
     "water":     (158, 200, 226),
@@ -150,6 +151,42 @@ def _lines_of(geom):
     return []
 
 
+# 哪些标签意味着"这是一个面"（当几何是闭合折线时要按面处理）
+_AREA_KEYS = ("landuse", "leisure", "amenity", "building", "area", "man_made",
+              "public_transport")
+_AREA_NATURAL = {"water", "wood", "scrub", "grassland", "wetland", "bare_rock",
+                 "sand", "beach", "heath", "fell"}
+_AREA_WATERWAY = {"riverbank", "dock"}
+
+
+def _area_rings(geom, props) -> list:
+    """取"面"要素的环列表 —— **这是修掉"只画了建筑"那个 bug 的关键**。
+
+    坑在哪：Overpass 的 `out geom` 对**闭合的 way**（绿地、水面、球场、校园范围）
+    同样返回 `geometry` 点列，如果转换脚本一律当成 LineString 存，
+    渲染时就会把**所有面状要素全部丢掉** —— 结果地图上只剩建筑。
+    （2026-10-02 就是这个症状：用户说"你貌似只做了建筑？"）
+
+    所以这里按"**首尾闭合 + 带面状标签**"把闭合折线认回多边形。
+    真正该在取数时（tools/fetch_vector_layers.py）就转成 Polygon；
+    这里加一道兼容，保证已有的 GeoJSON 也能正确渲染。
+    """
+    t = geom.get("type")
+    if t in ("Polygon", "MultiPolygon"):
+        return _rings_of(geom)
+    if t == "LineString":
+        c = geom.get("coordinates") or []
+        if len(c) >= 4 and c[0] == c[-1]:
+            looks_area = (
+                any(props.get(k) for k in _AREA_KEYS)
+                or props.get("natural") in _AREA_NATURAL
+                or props.get("waterway") in _AREA_WATERWAY
+            )
+            if looks_area:
+                return [c]
+    return []
+
+
 def render_frame_image(campus: str, s: float, w: float, n: float, e: float, *,
                        width: int = 2000) -> "object":
     """画一张底图并返回 `static_basemap.FrameImage`（与瓦片路径同接口、同坐标口径）。
@@ -195,39 +232,20 @@ def render_frame_image(campus: str, s: float, w: float, n: float, e: float, *,
     feats = vec["features"]
 
     def draw_polys(pred, color):
+        """画面状要素。用 `_area_rings` 而不是 `_rings_of`：
+        前者能把闭合折线认回多边形（见 _area_rings 的注释 —— 不然绿地全丢）。"""
         for f in feats:
             pr = f.get("properties") or {}
             if not pred(pr):
                 continue
-            for ring in _rings_of(f.get("geometry") or {}):
+            for ring in _area_rings(f.get("geometry") or {}, pr):
                 pts = [proj.pt(lo, la) for lo, la in ring]
                 if len(pts) >= 3:
                     d.polygon(pts, fill=color)
 
-    # 1) 绿地 / 场地 / 商业
-    draw_polys(lambda p: p.get("leisure") in ("park", "garden", "pitch", "sports_centre")
-               or p.get("landuse") in GREEN_LANDUSE
-               or p.get("natural") in ("wood", "scrub", "grassland"), C["green"])
-    draw_polys(lambda p: p.get("leisure") == "pitch" or p.get("landuse") == "grass",
-               C["pitch"])
-    draw_polys(lambda p: p.get("landuse") in SAND_LANDUSE, C["sand"])
-    draw_polys(lambda p: p.get("landuse") in COMMERCIAL_LANDUSE, C["commercial"])
-
-    # 2) 水面与河道
-    draw_polys(lambda p: p.get("natural") == "water" or p.get("waterway") == "riverbank"
-               or "water" in p, C["water"])
-    for f in feats:
-        pr = f.get("properties") or {}
-        if "waterway" not in pr:
-            continue
-        for line in _lines_of(f.get("geometry") or {}):
-            pts = [proj.pt(lo, la) for lo, la in line]
-            if len(pts) >= 2:
-                wd = max(2, int(round(6 * z))) if pr.get("waterway") in ("river", "canal") \
-                    else max(1, int(round(2.5 * z)))
-                d.line(pts, fill=C["waterway"], width=wd, joint="curve")
-
-    # 3) 校园底色
+    # 0) 校园底色 —— ⚠ 必须最先画！
+    #    之前把它放在绿地之后，结果校园内部整片被底色盖成空白（用户看到的就是
+    #    "校园里没有绿化/山地"）。层级顺序 = 底 -> 绿化/水面 -> 路 -> 建筑。
     gj = (bounds or {}).get("geojson") or {}
     if gj.get("type") in ("Polygon", "MultiPolygon"):
         for ring in _rings_of(gj):
@@ -237,10 +255,41 @@ def render_frame_image(campus: str, s: float, w: float, n: float, e: float, *,
     for f in feats:
         pr = f.get("properties") or {}
         if pr.get("amenity") == "university":
-            for ring in _rings_of(f.get("geometry") or {}):
+            for ring in _area_rings(f.get("geometry") or {}, pr):
                 pts = [proj.pt(lo, la) for lo, la in ring]
                 if len(pts) >= 3:
                     d.polygon(pts, fill=C["campus"])
+
+    # 1) 绿化：先铺草地/绿地，再叠树林与山地（颜色更深，读得出"这里有片林子/山"）
+    draw_polys(lambda p: p.get("landuse") in ("grass", "meadow", "village_green",
+                                              "recreation_ground", "allotments",
+                                              "orchard", "cemetery", "flowerbed")
+               or p.get("leisure") in ("park", "garden", "common", "pitch",
+                                       "sports_centre", "stadium", "playground",
+                                       "fitness_station", "track")
+               or p.get("natural") in ("grassland", "heath", "fell", "scrub"),
+               C["green"])
+    draw_polys(lambda p: p.get("landuse") in ("forest",)
+               or p.get("natural") in ("wood",),
+               C["forest"])
+    draw_polys(lambda p: p.get("leisure") == "pitch" or p.get("landuse") == "grass"
+               or p.get("leisure") == "stadium", C["pitch"])
+    draw_polys(lambda p: p.get("landuse") in SAND_LANDUSE, C["sand"])
+    draw_polys(lambda p: p.get("landuse") in COMMERCIAL_LANDUSE, C["commercial"])
+
+    # 2) 水面与河道
+    draw_polys(lambda p: p.get("natural") == "water" or p.get("waterway") in ("riverbank", "dock")
+               or "water" in p, C["water"])
+    for f in feats:
+        pr = f.get("properties") or {}
+        if "waterway" not in pr or pr.get("waterway") in ("riverbank", "dock"):
+            continue
+        for line in _lines_of(f.get("geometry") or {}):
+            pts = [proj.pt(lo, la) for lo, la in line]
+            if len(pts) >= 2:
+                wd = max(2, int(round(6 * z))) if pr.get("waterway") in ("river", "canal") \
+                    else max(1, int(round(2.5 * z)))
+                d.line(pts, fill=C["waterway"], width=wd, joint="curve")
 
     # 4) 道路：低等级先画，高等级盖在上面
     roads = [f for f in feats if (f.get("properties") or {}).get("highway")]
