@@ -210,6 +210,25 @@ try:
 except Exception as exc:
     check("自绘底图坐标自检", False, f"{type(exc).__name__}: {exc}")
 
+print("\n[8] 预生成底图必须与 app 请求的宽度一致（守部署隐患）")
+print("     —— 不一致的话云端容器会**现场重新拉瓦片/渲染**：慢，且可能被限流")
+try:
+    import static_basemap as _sb
+    # app.py 里 render_picker 请求的宽度
+    APP_WIDTH = 2000
+    for key in CAMPUSES:
+        src = _sb.source_of(key)
+        if src == "vector":
+            p = _sb.IMAGE_CACHE / f"{key}_vector_w{APP_WIDTH}.jpg"
+        else:
+            z = sb.choose_zoom(*[frame_of(key)[i] for i in (0, 1, 2, 3)], APP_WIDTH)
+            p = _sb.IMAGE_CACHE / f"{key}_osm_w{APP_WIDTH}_z{z}.jpg"
+        ok = p.exists() and p.stat().st_size > 0
+        check(f"{key}({src}): 预生成底图存在 {p.name}", ok,
+              f"{p.stat().st_size // 1024} KB" if ok else "缺失 ⇒ 云端会现场生成")
+except Exception as exc:
+    check("预生成底图检查", False, f"{type(exc).__name__}: {exc}")
+
 print("\n" + "=" * 66)
 if FAILS:
     print(f"✗ {len(FAILS)} 项失败：" + "、".join(FAILS))
