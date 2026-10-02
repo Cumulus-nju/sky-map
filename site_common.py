@@ -26,7 +26,7 @@ ADMIN_PAGE = "管理员"
 
 # 构建版本：显示在侧边栏，用来确认线上部署的是哪一版。
 # 改代码时**一起改这个**，push 后刷新线上即可确认是否真的更新了。
-BUILD = "2026-10-02a"
+BUILD = "2026-10-02b"
 
 # 页面文件（Streamlit 按文件路由：根目录 app.py = "/"，pages/ 下的各占一个路径）
 SUBMIT_FILE = "app.py"
@@ -60,6 +60,36 @@ def qp(name: str, default: str = "") -> str:
     if isinstance(v, list):
         v = v[0] if v else None
     return str(v) if v is not None else default
+
+
+def clear_qp(*names: str) -> None:
+    """删掉指定的查询参数（读走之后要清掉，避免 URL 一直挂着旧值）。"""
+    for n in names:
+        try:
+            del st.query_params[n]
+        except Exception:
+            pass
+
+
+def take_pick() -> tuple[float, float] | None:
+    """取走"刚在静态底图上点选"的坐标，并清除查询参数。
+
+    机制：点选组件是内嵌 iframe，点一下会把 `pick=lat,lon` 写进父窗口 URL
+    （同源可写），Streamlit 检测到查询参数变化就 rerun；这里读走它。
+    读走必须清除，否则刷新页面会一直重复套用同一个点。
+    """
+    raw = qp("pick")
+    if not raw:
+        return None
+    clear_qp("pick", "pick_campus")
+    try:
+        la_s, lo_s = raw.split(",")[:2]
+        lat, lon = float(la_s), float(lo_s)
+    except Exception:
+        return None
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return None
+    return (round(lat, 7), round(lon, 7))
 
 
 def nav(current: str) -> None:

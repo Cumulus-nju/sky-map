@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 # 因为**文件对不代表进程里加载的模块对**。有了这个常量，页面可以直接把
 # 运行中的模块版本打印出来 —— 一眼看出线上到底跑的是哪一版。
 # 改动本文件的**结构**（增删字段/函数）时，把这个日期一起改。
-CONFIG_VERSION = "2026-10-02a"
+CONFIG_VERSION = "2026-10-02b"
 
 
 @dataclass(frozen=True)

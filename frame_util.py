@@ -132,20 +132,62 @@ def _center_lat(key: str) -> float:
 
 
 def _compute_min_zoom(frame: tuple[float, float, float, float], lat: float,
-                      view_w: float, view_h: float) -> int:
+                      view_w: float, view_h: float, pad: float = 1.15) -> int:
     """Web Mercator：缩放 0 时 1 像素 = 156543.03392·cos(lat) 米。
 
     外框在缩放 z 下占的像素 = 框米数 · 2^z / (156543.03392·cos(lat))，
-    令它等于视口尺寸解出 z，宽高取较小者（两个方向都得装得下），再留 15% 余量。
+    令它等于视口尺寸解出 z，宽高取较小者（两个方向都得装得下）。
+    `pad` 是允许"比框再往外缩一点"的余量。
     """
     s, w, n, e = frame
-    w_m = (e - w) * 111320.0 * math.cos(math.radians(lat)) * 1.15
-    h_m = (n - s) * 111320.0 * 1.15
+    w_m = (e - w) * 111320.0 * math.cos(math.radians(lat)) * pad
+    h_m = (n - s) * 111320.0 * pad
     if w_m <= 0 or h_m <= 0:
         return 12
     px0 = 156543.03392 * math.cos(math.radians(lat))
     zoom = math.log2(min(view_w / (w_m / px0), view_h / (h_m / px0)))
     return max(11, min(18, int(math.floor(zoom))))
+
+
+def zoom_to_fit(key: str, view_w: float, view_h: float) -> int:
+    """把外框**正好装进视口**所需的缩放级（不留余量）。
+
+    这是地图的初始视野：进去就先看见整个蓝框。实际生效的视野由浏览器端的
+    `fitBounds` 决定，这里主要用于服务端估算与容器高度换算。
+    """
+    return _compute_min_zoom(frame_of(key), _center_lat(key), view_w, view_h, pad=1.0)
+
+
+def frame_center(key: str) -> tuple[float, float]:
+    """外框的几何中心 (lat, lon)。
+
+    ⚠️ 不要用 `campus().center` 当初始视野中心：那是校园中心，与外框中心不重合，
+    框会偏到一边（2026-10-02 的"长条"问题就有一部分是这个原因）。
+    """
+    s, w, n, e = frame_of(key)
+    return ((s + n) / 2, (w + e) / 2)
+
+
+def frame_aspect(key: str) -> float:
+    """外框的 高/宽 比（用于按框的比例决定地图容器高度，避免框被压成一条）。"""
+    s, w, n, e = frame_of(key)
+    lat = _center_lat(key)
+    w_m = (e - w) * 111320.0 * math.cos(math.radians(lat))
+    h_m = (n - s) * 111320.0
+    if w_m <= 0:
+        return 0.5
+    return h_m / w_m
+
+
+def map_height_for_frame(key: str, view_w: float = 914.0,
+                         min_h: float = 420.0, max_h: float = 800.0) -> int:
+    """按外框比例算出地图容器高度，让框尽量填满、不浪费大片空白。
+
+    高瘦的框（如仙林）给高一点的容器，宽扁的框（如苏州）给矮一点的。
+    限制在 [min_h, max_h] 内，免得极端比例把页面撑爆或压扁。
+    """
+    h = view_w * frame_aspect(key) + 40.0   # +40 给比例尺/图例留一点余量
+    return int(max(min_h, min(max_h, round(h))))
 
 
 def module_state_ok() -> bool:

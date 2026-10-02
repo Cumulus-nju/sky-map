@@ -18,6 +18,7 @@ from pathlib import Path
 
 import folium
 import streamlit as st
+import streamlit.components.v1 as components
 from streamlit_folium import st_folium
 
 import site_common as S
@@ -34,11 +35,14 @@ S.setup("投稿", "🌤")
 #   ② frame_of / min_zoom_for_frame 一律用 frame_util 的降级实现。
 from campus_config import CAMPUSES, campus as get_campus  # noqa: E402
 from frame_util import (  # noqa: E402
+    frame_center,
     frame_of,
+    map_height_for_frame,
     min_zoom_for_frame,
     module_state_ok,
     module_version,
 )
+
 
 from photos import make_thumb_bytes, parse_shot_time, read_exif  # noqa: E402
 from submission_data import (  # noqa: E402
@@ -111,58 +115,63 @@ def save_photo(upload) -> tuple[str, str]:
     return origin_ref, thumb_ref
 
 
-def render_map(campus_key: str, picked: tuple[float, float] | None):
+def render_picker(campus_key: str, picked: tuple[float, float] | None):
+    """渲染选点组件：**外框内的静态底图** + 点击取坐标。
+
+    为什么换成静态图（2026-10-02，用户提的方案，替代实时 Leaflet 地图）：
+      * 实时地图的"视野贴合"依赖容器实际尺寸，服务端算不准 —— 就是之前那个
+        "蓝框塞进扁容器变成一条"的老问题，怎么调都有余量；
+      * 静态图里"图上的每个像素 ↔ 固定的经纬度"是纯数学关系，**没有视图尺寸参与**，
+        点选永远对得齐；
+      * 美术可控（图可以先做统一调色/压暗/加标注），且内嵌 data URL，弱网也能看。
+
+    换算的一致性由 `frame_picker.assert_js_python_agree` 守着（测试里会跑）。
+    """
+    import frame_picker
+    import static_basemap
+
     cfg = get_campus(campus_key)
     fs, fw, fn, fe = frame_of(campus_key)
-    # 视口宽高参考值：用浏览器实测的 st_folium 嵌入尺寸（高 460 是下面传的）
-    min_z = min_zoom_for_frame(campus_key, view_w=914, view_h=460)
-    m = folium.Map(
-        location=list(cfg.center),
-        zoom_start=cfg.zoom,
-        tiles=None,
-        control_scale=True,
-        # 把视野锁进外框：只能往里放大，缩不出去；maxBoundsViscosity=1 让边界变硬
-        # （不加的话 Leaflet 在拖到边界时会弹性回弹，看着像"卡住"）
-        min_lat=fs, max_lat=fn, min_lon=fw, max_lon=fe,
-        max_bounds=True,
-        maxBoundsViscosity=1.0,
-        # ⚠ 必须用 minZoom 而不是 min_zoom：folium 的 min_zoom 只作用于瓦片图层，
-        # 不会写进 L.map 的 options，地图照样能缩到 z=0 看到整个东亚。
-        minZoom=min_z,
-        zoomControl=True,
+
+    try:
+        fi = static_basemap.cached_frame_image(
+            campus_key, fs, fw, fn, fe, target_width=1400)
+    except Exception as exc:
+        # 拼图失败（断网 / 瓦片源限流）不能让投稿页崩掉 —— 退回实时地图并提示
+        st.warning(
+            f"静态底图生成失败（{type(exc).__name__}: {exc}），已临时切回在线地图。"
+            "若是首次运行，请连网后点下方按钮重试。",
+            icon="🗺",
+        )
+        return render_map_fallback(campus_key, picked)
+
+    doc, height = frame_picker.build_picker_html(
+        fi, campus_key=campus_key, display_width=880, picked=picked,
+        landmarks=cfg.landmarks,
+        tip="点一下你拍照站的位置（越准越好）",
     )
+    components.html(doc, height=int(height) + 4, scrolling=False)
+    return None
 
-    def add_tile(src, name, show):
-        kw = dict(name=name, max_zoom=src.max_zoom, attr=src.attr, show=show, control=True)
-        if src.subdomains:
-            kw["subdomains"] = list(src.subdomains)
-        folium.TileLayer(tiles=src.url, **kw).add_to(m)
 
-    # 街道底图（WGS84）设为默认：和照片点位、OSM 建筑同一坐标系，点选最准
-    add_tile(cfg.streets, cfg.streets.name, True)
-    # 卫星影像仅作参考 —— 高德是 GCJ-02，未纠偏，别用它对准机位
-    add_tile(cfg.imagery, cfg.imagery.name + "（仅参考，有坐标偏移）", False)
-
-    # 外框：校园 + 周边缓冲。点击请落在框内，框外会被标为「待复核」
-    folium.Rectangle(
-        bounds=[[fs, fw], [fn, fe]], color="#2f6fb5", weight=1.6, fill=False, dash_array="6 4",
-        tooltip="可拍摄范围：校园及周边一圈。点框外会被标为「待复核」",
-    ).add_to(m)
-
-    # 已知地标，方便同学对准
-    for name, (la, lo) in cfg.landmarks.items():
-        folium.CircleMarker(
-            [la, lo], radius=4, color="#e0713c", weight=2, fill=True, fill_color="#fff",
-            fill_opacity=1, tooltip=name,
-        ).add_to(m)
-
+def render_map_fallback(campus_key: str, picked: tuple[float, float] | None):
+    """静态底图不可用时的兜底：原来的在线 Leaflet 地图（功能少一点但能选点）。"""
+    fs, fw, fn, fe = frame_of(campus_key)
+    center = frame_center(campus_key)
+    height = map_height_for_frame(campus_key, view_w=880)
+    min_z = min_zoom_for_frame(campus_key, view_w=880, view_h=height)
+    m = folium.Map(location=list(center), zoom_start=min_z, tiles=None,
+                   control_scale=True, min_lat=fs, max_lat=fn, min_lon=fw, max_lon=fe,
+                   max_bounds=True, maxBoundsViscosity=1.0, minZoom=min_z, zoomControl=True)
+    folium.TileLayer(tiles=get_campus(campus_key).streets.url,
+                     attr=get_campus(campus_key).streets.attr,
+                     max_zoom=get_campus(campus_key).streets.max_zoom).add_to(m)
+    folium.Rectangle(bounds=[[fs, fw], [fn, fe]], color="#2f6fb5", weight=1.6,
+                     fill=False, dash_array="6 4").add_to(m)
     if picked and picked[0] is not None:
-        folium.Marker(
-            list(picked), tooltip="你选的机位", icon=folium.Icon(color="red", icon="camera", prefix="fa")
-        ).add_to(m)
-
-    folium.LayerControl(collapsed=True).add_to(m)
-    return st_folium(m, height=460, use_container_width=True, returned_objects=["last_clicked"])
+        folium.Marker(list(picked), tooltip="你选的机位").add_to(m)
+    return st_folium(m, height=height, use_container_width=True,
+                     returned_objects=["last_clicked"])
 
 
 def main() -> None:
@@ -205,8 +214,18 @@ def main() -> None:
 
     state_key = f"picked_{campus_key}"
     picked = st.session_state.get(state_key)
-    clicked = render_map(campus_key, picked)
-    if clicked and clicked.get("last_clicked"):
+
+    # 静态底图上的点选：组件把坐标写进 URL 查询参数，这里读走并落到 session_state。
+    # 为什么用查询参数中转：st_folium 的 last_clicked 在静态图方案里没有了，
+    # 而 components 组件没有返回值通道，查询参数是最省事且可靠的桥。
+    from_pick = S.take_pick()
+    if from_pick and from_pick != picked:
+        st.session_state[state_key] = from_pick
+        picked = from_pick
+
+    clicked = render_picker(campus_key, picked)
+    # 兜底分支（在线地图）仍走 last_clicked
+    if clicked and isinstance(clicked, dict) and clicked.get("last_clicked"):
         lc = clicked["last_clicked"]
         newpt = (round(lc["lat"], 6), round(lc["lng"], 6))
         if newpt != picked:

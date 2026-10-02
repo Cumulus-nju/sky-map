@@ -19,6 +19,13 @@ data/*密码*
 data/*secret*
 data/*credential*
 
+# 瓦片缓存（可再生，体积大，别提交）
+data/tile_cache/
+
+# ⚠️ 但 data/frame_images/ **要提交**：那是预生成的"外框静态底图"，
+# 总共才 ~1 MB，提交后云端容器重启也无需现场拉瓦片（否则首次访问会慢且可能被限流）。
+# 同时把 data/tile_check/ 的既有忽略规则保留，那里是人工校对用的中间图。
+
 # 打包产物
 dist/
 *.zip
