@@ -127,14 +127,24 @@ try:
                                             landmarks={"北大楼": (32.05714, 118.77421)})
     check("HTML 生成成功且有高度", isinstance(doc, str) and h > 0, f"高度 {h:.0f}px")
     check("含 data URL 底图", "data:image/png;base64," in doc)
-    check("含点击处理", "addEventListener('pointerup'" in doc)
+    check("含右键选点", "addEventListener('contextmenu'" in doc)
+    check("屏蔽了浏览器右键菜单", "ev.preventDefault()" in doc)
+    check("左键才拖动（右键不进入拖动）", "if (ev.button === 2) return;" in doc)
     check("含查询参数回传", "searchParams.set('pick'" in doc)
     check("含视图状态回传（pnav）", "searchParams.set('pnav'" in doc)
     check("含滚轮缩放", "addEventListener('wheel'" in doc)
     check("含拖拽平移", "addEventListener('pointermove'" in doc)
     check("含缩放按钮", 'id="zin"' in doc and 'id="zout"' in doc)
     check("含窗口尺寸换算 winW/winH", "function winW()" in doc and "function winH()" in doc)
+    check("含宽度自适应", "function fitToParent()" in doc)
     check("经纬度非空", "nwLat" in doc and "seLat" in doc)
+    # 结构性检查：JS 里 getElementById 用到的 id 都必须在 HTML 里存在。
+    # （漏掉 <div id="pick"> 曾导致 render() 抛 TypeError、组件完全失灵，且不报错。）
+    import re as _re
+    used = set(_re.findall(r"getElementById\('([^']+)'\)", doc))
+    declared = set(_re.findall(r'id="([^"]+)"', doc))
+    missing = sorted(used - declared)
+    check("getElementById 用到的 id 都存在", not missing, f"缺失：{missing}")
 except Exception as exc:
     check("组件 HTML 生成", False, f"{type(exc).__name__}: {exc}")
 

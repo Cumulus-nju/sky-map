@@ -1,4 +1,4 @@
-// 验证静态底图"缩放后点选"是否仍然准确 —— 这是本次改动最大的风险点。
+﻿// 验证静态底图"缩放后点选"是否仍然准确 —— 这是本次改动最大的风险点。
 //
 // 做三件事：
 //   1. 用滚轮放大到 z=2，确认视图真的变了（窗口变小 = 图像被拉大）；
@@ -86,7 +86,33 @@ const geo = await ev(`(() => {
 })()`);
 console.log("组件几何:", JSON.stringify(geo));
 
-const cx0 = geo.pageLeft + geo.w / 2, cy0 = geo.pageTop + geo.h / 2;
+// 地图变高后可能超出视口，交互事件必须落在**视口内** —— 所以先把地图滚进视口中央，
+// 再按"滚动后"的位置算坐标。（不这么做的话事件会落到页面外，静默无效。）
+await ev(`(() => {
+  for (const f of document.querySelectorAll('iframe')) {
+    try { const d = f.contentDocument; if (d && d.getElementById('frame')) {
+      f.scrollIntoView({block: 'center'}); return true; } } catch (e) {}
+  }
+  return false;
+})()`);
+await sleep(2500);
+
+const geo2 = await ev(`(() => {
+  for (const f of document.querySelectorAll('iframe')) {
+    try {
+      const d = f.contentDocument; const w = d && d.getElementById('frame');
+      if (!w) continue;
+      const r = w.getBoundingClientRect();
+      return { pageLeft: r.left, pageTop: r.top, w: r.width, h: r.height,
+               vh: window.innerHeight, vw: window.innerWidth,
+               inView: r.top > 0 && r.top + r.height < window.innerHeight };
+    } catch (e) { return { err: String(e) }; }
+  }
+  return { err: 'not found' };
+})()`);
+console.log("滚动后几何:", JSON.stringify(geo2));
+
+const cx0 = geo2.pageLeft + geo2.w / 2, cy0 = geo2.pageTop + geo2.h / 2;
 
 // ---- 1) 滚轮放大到最大 ----
 for (let i = 0; i < 4; i++) {
@@ -121,14 +147,18 @@ const inner = await ev(`(() => {
 })()`);
 console.log("组件内部:", JSON.stringify(inner));
 
-// ---- 2) 在放大后的视图上点一个偏离中心的位置 ----
+// ---- 2) 在放大后的视图上**右键**选点（左键现在只负责拖动）----
 const fx = 0.62, fy = 0.38;
-const px = geo.pageLeft + geo.w * fx, py = geo.pageTop + geo.h * fy;
-for (const type of ["mousePressed", "mouseReleased"]) {
-  await send("Input.dispatchMouseEvent", {
-    type, x: Math.round(px), y: Math.round(py), button: "left", clickCount: 1, buttons: 1,
-  }, sid);
-}
+const px = geo2.pageLeft + geo2.w * fx, py = geo2.pageTop + geo2.h * fy;
+// 右键：button=right, buttons=2
+await send("Input.dispatchMouseEvent", {
+  type: "mousePressed", x: Math.round(px), y: Math.round(py),
+  button: "right", buttons: 2, clickCount: 1,
+}, sid);
+await send("Input.dispatchMouseEvent", {
+  type: "mouseReleased", x: Math.round(px), y: Math.round(py),
+  button: "right", buttons: 0, clickCount: 1,
+}, sid);
 await sleep(9000);
 
 const after = await ev(`(() => {
@@ -147,3 +177,4 @@ console.log("截图 ->", outPng);
 console.log("控制台错误:", errs.length ? errs.slice(0, 5) : "（无）");
 try { child.kill(); } catch {}
 process.exit(0);
+

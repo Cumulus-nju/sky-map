@@ -146,12 +146,15 @@ def render_picker(campus_key: str, picked: tuple[float, float] | None):
         return render_map_fallback(campus_key, picked)
 
     doc, height = frame_picker.build_picker_html(
-        fi, campus_key=campus_key, display_width=880, picked=picked,
+        fi, campus_key=campus_key, display_width=1100, picked=picked,
         nav=S.take_nav(),
         landmarks=cfg.landmarks,
-        tip="滚轮 / 双指缩放，拖动平移，点一下选机位",
+        max_display_height=880,
+        tip="滚轮缩放 · 左键按住拖动 · 右键选点",
     )
-    components.html(doc, height=int(height) + 4, scrolling=False)
+    # width 用 "stretch" 铺满可用宽度：组件内部会自己量父容器宽度并调整
+    # #frame 与 iframe 高度（Streamlit 只收整数宽度，写死会在窄屏被裁）。
+    components.html(doc, width="stretch", height=int(height) + 4, scrolling=False)
     return None
 
 
