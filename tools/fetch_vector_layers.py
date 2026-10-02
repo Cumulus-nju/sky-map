@@ -48,20 +48,27 @@ PAD_DEG = 0.004
 
 
 def build_query(s: float, w: float, n: float, e: float) -> str:
+    """构造 Overpass 查询。
+
+    ⚠️ **必须同时取 way 和 relation**（2026-10-03 踩的坑）：
+    OSM 里**大面积**的林地/水面/公园常被画成 **multipolygon 关系（relation）**，
+    而不是单个闭合 way。只查 way 的话，像仙林南雍山那一整片森林会**完全取不到**，
+    自绘出来就是一片空白（对照 OSM 官方渲染图一眼就能看出差在哪）。
+    """
     bbox = f"{s},{w},{n},{e}"
+    keys = ('["highway"]', '["waterway"]', '["natural"]', '["landuse"]',
+            '["leisure"]', '["place"]', '["amenity"="university"]',
+            '["boundary"="administrative"]')
+    parts = []
+    for k in keys:
+        parts.append(f'  way{k}({bbox});')
+        parts.append(f'  relation{k}({bbox});')
+    parts.append(f'  node["place"]({bbox});')
+    body = "\n".join(parts)
     return f"""
-[out:json][timeout:120];
+[out:json][timeout:180];
 (
-  way["highway"]({bbox});
-  way["waterway"]({bbox});
-  way["natural"="water"]({bbox});
-  way["waterway"="riverbank"]({bbox});
-  way["landuse"]({bbox});
-  way["leisure"]({bbox});
-  way["place"]({bbox});
-  node["place"]({bbox});
-  way["boundary"="administrative"]["amenity"="university"]({bbox});
-  way["amenity"="university"]({bbox});
+{body}
 );
 out geom;
 """
@@ -89,18 +96,43 @@ _AREA_NATURAL = {"water", "wood", "scrub", "grassland", "wetland", "bare_rock",
 _AREA_WATERWAY = {"riverbank", "dock"}
 
 
+def _rings_from_relation(el: dict) -> list:
+    """把 multipolygon 关系拼成环列表（outer 环，内环暂按外环处理）。
+
+    `out geom` 的关系结果长这样：
+        members: [{type:'way', role:'outer', geometry:[{lat,lon},...]}, ...]
+    多个 outer 成员要各自成为独立环（不能首尾相接强行串起来）。
+    """
+    rings = []
+    for m in el.get("members") or []:
+        if m.get("type") != "way":
+            continue
+        role = m.get("role") or "outer"
+        if role not in ("outer", "exclave", ""):
+            continue
+        geo = m.get("geometry") or []
+        coords = [[p["lon"], p["lat"]] for p in geo]
+        if len(coords) >= 4:
+            if coords[0] != coords[-1]:
+                coords.append(coords[0])
+            rings.append(coords)
+    return rings
+
+
 def to_geojson(elements: list) -> dict:
     """Overpass 的 out geom 结果 -> GeoJSON FeatureCollection。
 
-    ⚠️ 这里有个**必须处理**的坑（2026-10-02 踩过，症状是"地图上只剩建筑"）：
-    `out geom` 对**闭合的 way**（绿地、水面、球场、校园范围）同样返回 `geometry`
-    点列，如果一律当 LineString 存，渲染时的面状图层就全是空的 ——
-    绿地、湖面、山地**一个都画不出来**，只剩建筑（建筑来自另一个文件）。
-    所以闭合 + 带面状标签的 way 要存成 Polygon。
+    两个必须处理的坑（都踩过）：
+    ① `out geom` 对**闭合的 way**（绿地、水面、球场）同样返回 geometry 点列，
+       一律当 LineString 存的话，面状图层全空 ⇒ 只剩建筑。
+       ⇒ 闭合 + 带面状标签的 way 要存成 Polygon。
+    ② **大面积的林地/水面常是 multipolygon 关系**，只查 way 会整个漏掉
+       （仙林南雍山那片森林就是这么丢的）⇒ 关系要拼成 Polygon。
     """
     feats = []
     for el in elements:
         tags = el.get("tags") or {}
+        geom = None
         if el["type"] == "node":
             geom = {"type": "Point", "coordinates": [el["lon"], el["lat"]]}
         elif el["type"] == "way" and el.get("geometry"):
@@ -113,11 +145,16 @@ def to_geojson(elements: list) -> dict:
                 or tags.get("natural") in _AREA_NATURAL
                 or tags.get("waterway") in _AREA_WATERWAY
             )
-            if closed and looks_area:
-                geom = {"type": "Polygon", "coordinates": [coords]}
-            else:
-                geom = {"type": "LineString", "coordinates": coords}
-        else:
+            geom = ({"type": "Polygon", "coordinates": [coords]}
+                    if (closed and looks_area)
+                    else {"type": "LineString", "coordinates": coords})
+        elif el["type"] == "relation":
+            rings = _rings_from_relation(el)
+            if rings:
+                geom = ({"type": "Polygon", "coordinates": [rings[0]]}
+                        if len(rings) == 1
+                        else {"type": "MultiPolygon", "coordinates": [[r] for r in rings]})
+        if geom is None:
             continue
         feats.append({"type": "Feature", "properties": tags, "geometry": geom})
     return {"type": "FeatureCollection", "features": feats}

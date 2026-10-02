@@ -35,14 +35,13 @@ IMAGE_CACHE = HERE / "data" / "frame_images"
 # 绿地与水面几乎看不出来 —— 地图要好读，层次就得拉开。
 C = {
     "bg":        (242, 238, 229),
+    "campus":    (250, 247, 239),
+    "builtup":   (232, 227, 217),      # 宿舍区/商业/停车等"人工地面"（OSM 也上色的那类）
     "green":     (203, 219, 183),      # 草地/绿地
     "forest":    (178, 200, 158),      # 树林、山体（更深一档，读得出层次）
     "pitch":     (196, 216, 176),      # 运动场地
-    "sand":      (231, 223, 208),
-    "commercial": (234, 228, 217),
     "water":     (158, 200, 226),
     "waterway":  (146, 192, 222),
-    "campus":    (250, 247, 239),
     "road_main":  (245, 176, 58),
     "road_main_c": (222, 158, 40),
     "road_2nd":  (255, 255, 255),
@@ -56,6 +55,12 @@ C = {
     "label_halo": (255, 255, 255),
     "accent":    (206, 84, 40),
 }
+
+# 保留旧键名以免别处引用报错（渲染已改用上面的 builtup/green/forest 分层）
+SAND_LANDUSE = {"sand", "bare_soil", "construction", "brownfield", "landfill"}
+COMMERCIAL_LANDUSE = {"commercial", "retail", "industrial", "railway"}
+GREEN_LANDUSE = {"grass", "forest", "meadow", "recreation_ground", "village_green",
+                 "park", "garden", "cemetery", "orchard", "allotments"}
 
 # 道路等级 -> (线宽系数, 填充色键, 描边色键)
 ROAD_STYLE = {
@@ -233,9 +238,15 @@ def render_frame_image(campus: str, s: float, w: float, n: float, e: float, *,
 
     def draw_polys(pred, color):
         """画面状要素。用 `_area_rings` 而不是 `_rings_of`：
-        前者能把闭合折线认回多边形（见 _area_rings 的注释 —— 不然绿地全丢）。"""
+        前者能把闭合折线认回多边形（见 _area_rings 的注释 —— 不然绿地全丢）。
+
+        ⚠️ 排除 `boundary=administrative`：加了 relation 之后，像"麒麟街道""江宁区"
+        这类**行政区边界**也被取回来了，它们面积巨大，一旦当面积填充会把整张图刷成一片色。
+        """
         for f in feats:
             pr = f.get("properties") or {}
+            if pr.get("boundary") == "administrative":
+                continue
             if not pred(pr):
                 continue
             for ring in _area_rings(f.get("geometry") or {}, pr):
@@ -245,7 +256,7 @@ def render_frame_image(campus: str, s: float, w: float, n: float, e: float, *,
 
     # 0) 校园底色 —— ⚠ 必须最先画！
     #    之前把它放在绿地之后，结果校园内部整片被底色盖成空白（用户看到的就是
-    #    "校园里没有绿化/山地"）。层级顺序 = 底 -> 绿化/水面 -> 路 -> 建筑。
+    #    "校园里没有绿化/山地"）。层级顺序 = 底 -> 校园底色 -> 绿化/水面 -> 路 -> 建筑。
     gj = (bounds or {}).get("geojson") or {}
     if gj.get("type") in ("Polygon", "MultiPolygon"):
         for ring in _rings_of(gj):
@@ -260,24 +271,38 @@ def render_frame_image(campus: str, s: float, w: float, n: float, e: float, *,
                 if len(pts) >= 3:
                     d.polygon(pts, fill=C["campus"])
 
-    # 1) 绿化：先铺草地/绿地，再叠树林与山地（颜色更深，读得出"这里有片林子/山"）
+    # 1) 建筑以外的"用地"底色：宿舍区/商业/停车/施工等（OSM 官方渲染也会给它们上色，
+    #    少了这些，大片区域就是空白 —— 用户说"OSM 其实是有颜色的"就是这个意思）
+    draw_polys(lambda p: p.get("landuse") in ("residential", "education", "religious",
+                                              "institutional", "military", "railway",
+                                              "quarry", "landfill", "greenfield",
+                                              "brownfield", "construction", "farmland",
+                                              "farmyard", "industrial", "retail",
+                                              "commercial", "garages")
+               or p.get("amenity") in ("parking", "school", "hospital", "theatre",
+                                       "marketplace", "bus_station")
+               or p.get("leisure") == "swimming_pool",
+               C["builtup"])
+
+    # 2) 绿化：草地/绿地
     draw_polys(lambda p: p.get("landuse") in ("grass", "meadow", "village_green",
                                               "recreation_ground", "allotments",
-                                              "orchard", "cemetery", "flowerbed")
+                                              "orchard", "cemetery", "flowerbed",
+                                              "forest", "farmland")
                or p.get("leisure") in ("park", "garden", "common", "pitch",
                                        "sports_centre", "stadium", "playground",
-                                       "fitness_station", "track")
-               or p.get("natural") in ("grassland", "heath", "fell", "scrub"),
+                                       "fitness_station", "track", "golf_course",
+                                       "nature_reserve")
+               or p.get("natural") in ("grassland", "heath", "fell", "scrub",
+                                       "wood", "tree_row"),
                C["green"])
-    draw_polys(lambda p: p.get("landuse") in ("forest",)
-               or p.get("natural") in ("wood",),
+    # 3) 树林/山体：再叠一档更深的绿（大面积的 wood/forest 多来自 multipolygon 关系）
+    draw_polys(lambda p: p.get("landuse") == "forest" or p.get("natural") == "wood",
                C["forest"])
-    draw_polys(lambda p: p.get("leisure") == "pitch" or p.get("landuse") == "grass"
-               or p.get("leisure") == "stadium", C["pitch"])
-    draw_polys(lambda p: p.get("landuse") in SAND_LANDUSE, C["sand"])
-    draw_polys(lambda p: p.get("landuse") in COMMERCIAL_LANDUSE, C["commercial"])
+    draw_polys(lambda p: p.get("leisure") == "pitch" or p.get("leisure") == "stadium",
+               C["pitch"])
 
-    # 2) 水面与河道
+    # 4) 水面与河道
     draw_polys(lambda p: p.get("natural") == "water" or p.get("waterway") in ("riverbank", "dock")
                or "water" in p, C["water"])
     for f in feats:
@@ -291,7 +316,7 @@ def render_frame_image(campus: str, s: float, w: float, n: float, e: float, *,
                     else max(1, int(round(2.5 * z)))
                 d.line(pts, fill=C["waterway"], width=wd, joint="curve")
 
-    # 4) 道路：低等级先画，高等级盖在上面
+    # 5) 道路：低等级先画，高等级盖在上面
     roads = [f for f in feats if (f.get("properties") or {}).get("highway")]
     for lvl in ROAD_ORDER:
         style = ROAD_STYLE.get(lvl)
