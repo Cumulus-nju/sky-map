@@ -1,10 +1,17 @@
-// 线上/本地站点验收探针（可靠版）。
+// 线上/本地站点验收探针。
 //
-// 为什么重写（2026-10-02 踩的坑）：旧探针只读 `document.body.innerText` 并等它出现标题，
-// 但 Streamlit 的内容是异步补进 DOM 的 —— 读得太早会得到 len:0，**看着像白屏，其实是没等够**。
-// 更糟的是旧版因此在"站点正常"时也报 0，等于探针自己制造假故障。
-// 现在改为：轮询多个来源（body / [data-testid=stAppViewContainer] / 所有 textContent），
-// 并明确区分「骨架屏还在」「渲染完成」「有 Python 异常」三种状态。
+// ⚠️⚠️ 重要警告（2026-10-02 血的教训）：**这个探针在 Streamlit Cloud 线上页面上会给出
+// 假阴性**。实测同一次会话里，`Page.captureScreenshot` 明确显示应用已经完整渲染
+// （标题/侧边栏/地图/横幅全在），而同一 session 的 `Runtime.evaluate` 读
+// `document.body.textContent` 却始终只有 72 个字符的静态壳（"You need to enable
+// JavaScript..."），stApp / data-testid 全为空。本地跑同一个探针却 10 秒内正常读到。
+//
+// ⇒ **在线上页面，"截图"比 "Runtime.evaluate" 可信**。看到本探针报
+//   `mounted:false / textLen 很小` 时，**必须再看截图**，不要直接判定白屏 ——
+//   否则会把"站点正常"误报成故障（本次就是这么绕了一大圈）。
+//   判断线上到底跑没跑新代码，更可靠的办法是**看截图里侧边栏的「构建版本」**。
+//
+// 用法: node tools/cdp_accept.mjs <url> [outPng] [maxWaitSeconds]
 //
 // 用法: node tools/cdp_accept.mjs <url> [outPng] [maxWaitSeconds]
 import { spawn } from "node:child_process";
