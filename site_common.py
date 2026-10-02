@@ -26,7 +26,7 @@ ADMIN_PAGE = "管理员"
 
 # 构建版本：显示在侧边栏，用来确认线上部署的是哪一版。
 # 改代码时**一起改这个**，push 后刷新线上即可确认是否真的更新了。
-BUILD = "2026-10-02b"
+BUILD = "2026-10-02c"
 
 # 页面文件（Streamlit 按文件路由：根目录 app.py = "/"，pages/ 下的各占一个路径）
 SUBMIT_FILE = "app.py"
@@ -90,6 +90,31 @@ def take_pick() -> tuple[float, float] | None:
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
         return None
     return (round(lat, 7), round(lon, 7))
+
+
+def take_nav() -> tuple[float, float, int] | None:
+    """读取底图当前视图状态 `pnav=lat,lon,zoom`（**不清除**）。
+
+    为什么要跨 rerun 记住它：用户放大到某一层、拖到某个位置去精细点选，
+    如果每次点击后的 rerun 都把视图重置回全图，就白放大了 —— 体验会非常糟。
+    所以 `pnav` 幂等保留在 URL 里，每次渲染按它恢复视图。
+    """
+    raw = qp("pnav")
+    if not raw:
+        return None
+    try:
+        parts = raw.split(",")
+        lat, lon, z = float(parts[0]), float(parts[1]), int(float(parts[2]))
+    except Exception:
+        return None
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return None
+    # 夹到组件真正支持的缩放级（避免 URL 里塞个 99 让组件白算）
+    try:
+        from frame_picker import MAX_ZOOM
+    except Exception:
+        MAX_ZOOM = 2
+    return (lat, lon, max(0, min(MAX_ZOOM, z)))
 
 
 def nav(current: str) -> None:

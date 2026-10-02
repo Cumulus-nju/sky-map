@@ -127,11 +127,47 @@ try:
                                             landmarks={"北大楼": (32.05714, 118.77421)})
     check("HTML 生成成功且有高度", isinstance(doc, str) and h > 0, f"高度 {h:.0f}px")
     check("含 data URL 底图", "data:image/png;base64," in doc)
-    check("含点击处理", "addEventListener('click'" in doc)
+    check("含点击处理", "addEventListener('pointerup'" in doc)
     check("含查询参数回传", "searchParams.set('pick'" in doc)
+    check("含视图状态回传（pnav）", "searchParams.set('pnav'" in doc)
+    check("含滚轮缩放", "addEventListener('wheel'" in doc)
+    check("含拖拽平移", "addEventListener('pointermove'" in doc)
+    check("含缩放按钮", 'id="zin"' in doc and 'id="zout"' in doc)
+    check("含窗口尺寸换算 winW/winH", "function winW()" in doc and "function winH()" in doc)
     check("经纬度非空", "nwLat" in doc and "seLat" in doc)
 except Exception as exc:
     check("组件 HTML 生成", False, f"{type(exc).__name__}: {exc}")
+
+# ---------------------------------------------------------------------------
+print("\n[6] 缩放级边界：pnav 的 zoom 必须被夹到合法范围")
+from site_common import take_nav  # noqa: E402
+import streamlit as st  # noqa: E402
+
+# 直接测解析函数的健壮性（不依赖 Streamlit 运行时）
+try:
+    import site_common
+    # 用 monkeypatch 的方式验证解析逻辑
+    cases = [
+        ("32.05,118.77,0", (32.05, 118.77, 0)),
+        ("32.05,118.77,2", (32.05, 118.77, 2)),
+        ("32.05,118.77,99", (32.05, 118.77, 2)),     # 越界应被夹到组件上限
+        ("32.05,118.77,-5", (32.05, 118.77, 0)),
+    ]
+    for raw, want in cases:
+        site_common.qp = lambda name, default="", _r=raw: _r if name == "pnav" else default
+        got = site_common.take_nav()
+        ok = got is not None and abs(got[0] - want[0]) < 1e-9 and abs(got[1] - want[1]) < 1e-9 and got[2] == want[2]
+        check(f"pnav={raw!r} -> {want}", ok, f"得到 {got}")
+    # 非法输入不应抛异常
+    for bad in ("", "abc", "1,2", "999,999,1"):
+        site_common.qp = lambda name, default="", _r=bad: _r if name == "pnav" else default
+        try:
+            site_common.take_nav()
+            check(f"非法 pnav={bad!r} 不抛异常", True)
+        except Exception as exc:
+            check(f"非法 pnav={bad!r} 不抛异常", False, f"{type(exc).__name__}: {exc}")
+except Exception as exc:
+    check("pnav 解析测试", False, f"{type(exc).__name__}: {exc}")
 
 print("\n" + "=" * 66)
 if FAILS:

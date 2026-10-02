@@ -147,8 +147,9 @@ def render_picker(campus_key: str, picked: tuple[float, float] | None):
 
     doc, height = frame_picker.build_picker_html(
         fi, campus_key=campus_key, display_width=880, picked=picked,
+        nav=S.take_nav(),
         landmarks=cfg.landmarks,
-        tip="点一下你拍照站的位置（越准越好）",
+        tip="滚轮 / 双指缩放，拖动平移，点一下选机位",
     )
     components.html(doc, height=int(height) + 4, scrolling=False)
     return None
