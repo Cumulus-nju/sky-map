@@ -24,16 +24,9 @@ import site_common as S  # noqa: E402
 
 S.setup("管理后台", "🔧")
 
-try:
-    from campus_config import CAMPUSES, frame_of  # noqa: E402
-except Exception:  # pragma: no cover - 仅云端模块状态异常时走到
-    import campus_config as _cfg
+from campus_config import CAMPUSES  # noqa: E402
+from frame_util import frame_of  # noqa: E402  # 统一走带三级降级的兜底，不再自己写 c.frame
 
-    CAMPUSES = _cfg.CAMPUSES
-
-    def frame_of(key):  # type: ignore[misc]
-        c = _cfg.campus(key)
-        return c.frame if c.frame and tuple(c.frame) != (0.0, 0.0, 0.0, 0.0) else c.bbox
 from submission_data import (  # noqa: E402
     delete_submission,
     load_submissions,
@@ -45,6 +38,22 @@ from submission_data import (  # noqa: E402
 STATUS_OPTIONS = ["已收稿", "已入围", "已获奖", "已退稿"]
 AWARD_OPTIONS = ["", "一等奖", "二等奖", "三等奖", "人气奖", "优秀奖"]
 PAGE_SIZE = 12
+
+
+def _campus_or_first(key: str):
+    """按 key 取校区配置；key 异常（空值/脏数据/历史遗留）时退回第一个。
+
+    为什么需要：后台是对着**已存下来的投稿数据**渲染的，而 `CAMPUSES[s.campus]`
+    在 s.campus 不是合法 key（手工改过 jsonl、旧版本写入、字段为空）时会 KeyError，
+    整个后台直接崩。这里是兜底查询，不是静默吞错 —— 调用处仍会显示原始 key。
+    """
+    if key in CAMPUSES:
+        return CAMPUSES[key]
+    return next(iter(CAMPUSES.values()))
+
+
+def _campus_short(key: str) -> str:
+    return _campus_or_first(key).short if key else "未知"
 
 
 # ---------------------------------------------------------------- 登录 / 初始化
@@ -127,7 +136,7 @@ tab_review, tab_edit, tab_table = st.tabs(
 # ---------------------------------------------------------------- 待复核队列
 def spot_picker(key_prefix: str, campus_key: str, init: tuple[float, float]):
     """一个小地图，点一下取坐标，用于人工校正。"""
-    cfg = CAMPUSES[campus_key]
+    cfg = _campus_or_first(campus_key)
     center = list(init) if init and init[0] is not None else list(cfg.center)
     m = folium.Map(location=center, zoom_start=cfg.zoom + 1, tiles=None, control_scale=True)
     folium.TileLayer(tiles=cfg.streets.url, attr=cfg.streets.attr,
@@ -160,7 +169,7 @@ with tab_review:
                    "在地图上点一下正确位置，保存即可。")
         for s in pending[:30]:
             with st.expander(
-                f"**{s.sid}** · {s.title or '未命名'} · {CAMPUSES[s.campus].short} · "
+                f"**{s.sid}** · {s.title or '未命名'} · {CAMPUSES[s.campus].short if s.campus in CAMPUSES else s.campus} · "
                 f"{'无坐标' if not s.has_point else f'{s.lat:.5f}, {s.lon:.5f}'}"
                 f"{'　(落点在校区外)' if s.has_point and s.loc_verify else ''}",
                 expanded=False,
@@ -241,7 +250,8 @@ with tab_edit:
                     author = st.text_input("作者", value=s.author)
                     shot_time = st.text_input("拍摄时间", value=s.shot_time)
                     campus_key = st.selectbox(
-                        "校区", list(CAMPUSES), index=list(CAMPUSES).index(s.campus),
+                        "校区", list(CAMPUSES),
+                        index=list(CAMPUSES).index(s.campus) if s.campus in CAMPUSES else 0,
                         format_func=lambda k: CAMPUSES[k].name,
                     )
                 with f2:
@@ -292,7 +302,7 @@ with tab_table:
         for s in subs:
             rows.append({
                 "编号": s.sid,
-                "校区": CAMPUSES[s.campus].short if s.campus in CAMPUSES else s.campus,
+                "校区": _campus_short(s.campus),
                 "作品名": s.title,
                 "作者": s.author,
                 "天象": s.weather,

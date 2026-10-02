@@ -108,8 +108,23 @@ def main() -> int:
     check("打卡点有编号", all(s.sid for s in spots), " ".join(s.sid for s in spots))
 
     print("\n[10] CSV 导出")
-    p = export_csv(subs, Path(tempfile.mkdtemp()) / "out.csv")
+    subs_csv = [
+        Submission(sid="P0001", campus="gulou", lat=32.0571, lon=118.7742,
+                   title="A", author="甲", contact="2413800001"),
+    ]
+    p = export_csv(subs_csv, Path(tempfile.mkdtemp()) / "out.csv")
     check("CSV 已生成且有内容", p.exists() and p.stat().st_size > 0, f"{p.stat().st_size} bytes")
+    # 隐私回归：投稿页承诺 contact「不公开」，导出表默认不能带它
+    head = p.read_text(encoding="utf-8-sig").splitlines()[0]
+    body = p.read_text(encoding="utf-8-sig")
+    check("默认导出不含 contact 表头", "contact" not in head, head)
+    check("默认导出不含联系方式数值", "2413800001" not in body)
+    check("默认导出不含 photo_data（无用大字段）", "photo_data" not in head)
+    # 需要发奖时显式打开
+    p2 = export_csv(subs_csv, Path(tempfile.mkdtemp()) / "out2.csv", include_contact=True)
+    body2 = p2.read_text(encoding="utf-8-sig")
+    check("include_contact=True 时才带联系方式",
+          "contact" in body2.splitlines()[0] and "2413800001" in body2)
 
     print("\n" + "=" * 56)
     if FAILS:

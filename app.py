@@ -24,43 +24,21 @@ import site_common as S
 
 S.setup("投稿", "🌤")
 
-# 构建版本标记：显示在侧边栏，用来确认线上到底跑的是哪一版。
-# 教训（2026-10-01）：push 后线上报 ImportError，而本地用同一组文件跑完全正常，
-# 且 Git 各引用 / 工作区 / GitHub raw 的哈希完全一致 —— 云端模块状态可能与磁盘不一致。
-# 所以：① 下面 campus_config 的导入做兜底，不一致也不至于整站崩；
-#       ② 版本号可见（见 site_common.BUILD），一眼看出线上有没有真的更新。
-try:
-    from campus_config import (  # noqa: E402
-        CAMPUSES,
-        campus as get_campus,
-        frame_of,
-        min_zoom_for_frame,
-    )
-except Exception as _cfg_exc:  # pragma: no cover - 仅云端异常时走到
-    import campus_config as _cfg
-
-    CAMPUSES = _cfg.CAMPUSES
-    get_campus = _cfg.campus
-
-    def frame_of(key):  # type: ignore[misc]
-        c = _cfg.campus(key)
-        return c.frame if c.frame and tuple(c.frame) != (0.0, 0.0, 0.0, 0.0) else c.bbox
-
-    def min_zoom_for_frame(key, view_w=1000.0, view_h=460.0):  # type: ignore[misc]
-        import math
-
-        s, w, n, e = frame_of(key)
-        w_m = (e - w) * 111320.0 * math.cos(math.radians((s + n) / 2)) * 1.15
-        h_m = (n - s) * 111320.0 * 1.15
-        px0 = 156543.03392 * math.cos(math.radians((s + n) / 2))
-        return max(11, min(18, int(math.floor(math.log2(min(view_w / (w_m / px0), view_h / (h_m / px0)))))))
-
-    import streamlit as _st
-
-    _st.sidebar.warning(
-        f"campus_config 导入异常，已启用兜底逻辑：{type(_cfg_exc).__name__}: {_cfg_exc}",
-        icon="⚠️",
-    )
+# 外框与缩放级统一走 frame_util（带三级降级，任何模块状态都不会抛异常）。
+#
+# 教训（2026-10-01 线上白屏，完整 traceback 已确认）：云端容器里 campus_config 是
+# **旧版**（Campus 没有 frame 字段、也没有 frame_of / min_zoom_for_frame），而 app.py
+# 是新版。原来的写法在这里 `import frame_of` 失败 -> 走 except 兜底 -> 兜底里读
+# `c.frame` -> AttributeError -> 整站白屏。所以：
+#   ① 只 import 一定存在的名字（CAMPUSES / campus），不 import 可能缺的新函数；
+#   ② frame_of / min_zoom_for_frame 一律用 frame_util 的降级实现。
+from campus_config import CAMPUSES, campus as get_campus  # noqa: E402
+from frame_util import (  # noqa: E402
+    frame_of,
+    min_zoom_for_frame,
+    module_state_ok,
+    module_version,
+)
 
 from photos import make_thumb_bytes, parse_shot_time, read_exif  # noqa: E402
 from submission_data import (  # noqa: E402
@@ -189,6 +167,16 @@ def render_map(campus_key: str, picked: tuple[float, float] | None):
 
 def main() -> None:
     S.nav(S.SUBMIT_PAGE)
+
+    # 云端模块状态自检：campus_config 不是完整新版时给出**可见**提示。
+    # 这样"线上加载了旧模块"会自己说出来，而不是等某个页面崩掉才发现。
+    if not module_state_ok():
+        st.warning(
+            "检测到 `campus_config` 模块不是最新版，地图外框已启用**内置兜底数据**"
+            f"（模块版本：`{module_version() or '未知（旧版）'}`）。\n\n"
+            "功能可用，但若与最新配置不一致，请到 Streamlit Cloud → Manage app → **Reboot** 重启容器。",
+            icon="⚠️",
+        )
 
     st.title("🌤 天光云影 · 校园天空摄影大赛投稿")
     st.caption("南京大学校园天空摄影大赛 · 南赫学院 × 南京大学摄影社 · 征稿 2026-10-08 ~ 2026-11-15")

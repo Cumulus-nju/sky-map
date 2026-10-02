@@ -9,6 +9,16 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+# 配置版本：显示在侧边栏，用来判断**进程里实际加载的**是哪个版本的 campus_config。
+#
+# 为什么需要它（2026-10-01 线上白屏的教训）：当时云端磁盘上/config 模块是旧版
+# （Campus 没有 frame 字段），app.py 却是新版，于是 `import frame_of` 失败后走兜底、
+# 兜底又读 `c.frame` 直接 AttributeError 白屏。事后只能靠"读文件算 sha"间接推断，
+# 因为**文件对不代表进程里加载的模块对**。有了这个常量，页面可以直接把
+# 运行中的模块版本打印出来 —— 一眼看出线上到底跑的是哪一版。
+# 改动本文件的**结构**（增删字段/函数）时，把这个日期一起改。
+CONFIG_VERSION = "2026-10-02a"
+
 
 @dataclass(frozen=True)
 class TileSource:

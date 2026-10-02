@@ -420,16 +420,38 @@ def _safe_id(raw: str) -> str:
     return f(raw)
 
 
-def export_csv(subs: list[Submission], path: Path | None = None) -> Path:
+# 导出 CSV 时**默认不写**的字段：
+#   contact    —— 投稿页对同学承诺"仅用于发放奖品与版权确认，不公开"，
+#                 而这份 CSV 是拿来分享/归档的（map_build 每次生成地图都会写一份），
+#                 全字段导出等于把学号/微信/邮箱一起公开，是明确的隐私 bug（2026-10-02 修）。
+#   photo_data —— 单文件离线版才用的内嵌 data URL，动辄几百 KB 一格，CSV 里毫无用处。
+# 确实需要联系方式（比如发奖）时显式传 include_contact=True，见 export_csv。
+CSV_EXCLUDE = ("contact", "photo_data")
+
+
+def export_csv(
+    subs: list[Submission],
+    path: Path | None = None,
+    *,
+    include_contact: bool = False,
+) -> Path:
+    """导出投稿汇总 CSV。
+
+    默认剔除 `contact`（学号/微信/邮箱）与 `photo_data`，避免把同学的联系方式
+    随地图/汇总表一起分享出去。发奖等确需联系方式时传 `include_contact=True`，
+    并注意那份文件**不要公开分享**。
+    """
     path = path or (EXPORTS / "打卡点_投稿汇总.csv")
     path.parent.mkdir(parents=True, exist_ok=True)
+    drop = set(CSV_EXCLUDE)
+    if include_contact:
+        drop.discard("contact")
+    columns = [f for f in FIELDS if f not in drop]
     with path.open("w", newline="", encoding="utf-8-sig") as fh:
-        w = csv.DictWriter(fh, fieldnames=FIELDS)
+        w = csv.DictWriter(fh, fieldnames=columns, extrasaction="ignore")
         w.writeheader()
         for s in subs:
-            row = s.to_dict()
-            row.pop("photo_data", None)
-            w.writerow(row)
+            w.writerow(s.to_dict())
     return path
 
 
