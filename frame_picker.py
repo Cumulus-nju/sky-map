@@ -36,8 +36,8 @@ import math
 # 缩放级上限：0=整图铺满，1=2×，2=4×。
 # 不给更高是因为底图本身分辨率有限，再放大就是马赛克，对"点准一栋楼"没帮助。
 MAX_ZOOM = 2
-# 组件宽度自适应时的上下限（px）
-MIN_W, MAX_W = 320.0, 1220.0
+# 尺寸自适应时的上下限（px）。上限放宽一点，让地图能占满竖向空间。
+MIN_W, MAX_W = 320.0, 1500.0
 
 
 def frame_ratio(fi) -> float:
@@ -98,11 +98,11 @@ def build_picker_html(
     fi,
     *,
     campus_key: str,
-    display_width: float = 1100.0,
+    display_width: float = 1200.0,
     picked: tuple[float, float] | None = None,
     nav: tuple[float, float, int] | None = None,
     landmarks: dict[str, tuple[float, float]] | None = None,
-    max_display_height: float = 860.0,
+    max_display_height: float = 980.0,
     tip: str = "滚轮缩放 · 左键按住拖动 · 右键选点",
 ) -> tuple[str, float]:
     """生成点选组件的 HTML，返回 (html, 建议组件高度)。
@@ -259,28 +259,34 @@ function screenToImg(clientX, clientY) {{
           (cy - h / 2) + (clientY - r.top) / scale];
 }}
 
-// ---------------- 宽度自适应 ----------------
-// Streamlit 的 components.html 只收整数宽度，写死会在窄屏被裁掉、宽屏两侧留白。
-// 所以自己量父容器：既设 #frame 宽度，也把 iframe 高度调成内容高度（否则下方留空白）。
+// ---------------- 尺寸自适应 ----------------
+// ⚠️ 关键：**必须保持图片自身的宽高比**（= 外框的宽高比）。
+//
+// 上一版我把它铺满整个宽容器，结果容器是宽扁的（1220×745，比 1.64）而框是竖长的
+// （比 1.11）—— 为了铺满宽度，竖直方向只显示了外框的一半多点，**校园被裁在小窗口里
+// 又显得偏**（用户反馈："校园范围本身就没截全"）。
+//
+// 正确做法：按"框的比例"取一个尽量大的尺寸，同时受可用宽、可用高限制，
+// 宽高同乘一个比例缩放 —— 这样整张图（=整个外框）完整显示、比例不变形。
 function fitToParent() {{
-  let target = D.outW;
-  // 视口高度：地图别高到把下面的表单整个推走
-  let maxH = D.outH;
+  let availW = D.outW, availH = D.maxH;
   try {{
     const pw = window.parent ? window.parent.innerWidth : 0;
-    if (pw) target = Math.min(D.maxW, Math.max(D.minW, pw - 170));
     const ph = window.parent ? window.parent.innerHeight : 0;
-    if (ph) maxH = Math.max(380, Math.min(D.outH, ph * 0.74));
+    if (pw) availW = Math.min(D.maxW, Math.max(D.minW, pw - 170));
+    if (ph) availH = Math.min(D.maxH, Math.max(320, ph - 90));
   }} catch (e) {{}}
-  frame.style.width = Math.round(target) + 'px';
-  const ratio = D.ih / D.iw;
-  frame.style.height = Math.round(Math.min(target * ratio, maxH)) + 'px';
+  // 按框的比例等比缩放到可用区域内（宽高用同一个 k）
+  const k = Math.min(availW / D.iw, availH / D.ih);
+  const w = Math.round(D.iw * k), h = Math.round(D.ih * k);
+  frame.style.width = w + 'px';
+  frame.style.height = h + 'px';
   render();
   try {{
     if (window.frameElement) {{
-      const h = frame.getBoundingClientRect().height + 6;
-      window.frameElement.style.height = h + 'px';
-      window.frameElement.setAttribute('height', Math.round(h));
+      const fh = h + 6;
+      window.frameElement.style.height = fh + 'px';
+      window.frameElement.setAttribute('height', Math.round(fh));
     }}
   }} catch (e) {{}}
 }}
