@@ -12,6 +12,13 @@ data/tile_check/
 deploy/secrets.toml
 .env
 
+# 本机运维文件（🔴 含口令，绝不能提交）：data/ 不是整目录忽略，
+# 只忽略下面这些具体项，所以**新增任何含密钥/口令的文件都要在这里补一行**。
+data/*口令*
+data/*密码*
+data/*secret*
+data/*credential*
+
 # 打包产物
 dist/
 *.zip
