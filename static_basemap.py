@@ -46,20 +46,26 @@ USER_AGENT = "sky-map-campus-contest/1.0 (Nanjing University campus sky photo co
 
 # ---------------------------------------------------------------- 底图源
 #
-# 2026-10-02 定的：**用谷歌卫星影像**（用户要求，理由很直接 —— 画质明显高一大截，
-# 建筑纹理、树木、操场都清楚，高德卫星在同样尺寸下糊得多）。
+# 2026-10-02 最终定：**OSM 街道图**（`tile.openstreetmap.org`）。
 #
-# ⚠ 坐标系结论（别再来回改）：谷歌卫星瓦片**零偏移**即与 WGS84/OSM 对齐。
-#   判据不是"看着像"，而是客观指标：把 OSM 建筑轮廓画上去，量"轮廓处的影像
-#   边缘强度提升"，零偏移 1.065 > GCJ 平移 1.022（`tools/_probe_google_gcj.py`）。
-#   这与"高德街道图是 GCJ-02、必须纠偏"并不矛盾 —— 卫星影像和矢量图是两套东西。
+# 为什么是它（我走过一段弯路，记下来免得再犯）：我曾把底图换成谷歌卫星影像，
+# 理由是"写实、清晰"；但用户要的是**能认路** —— 米色建筑块 + 橙色主路 +
+# **中文路名/小区名**（"北阴阳营8号小区""苏浙运动场""北京西路"…）。
+# 卫星影像再清晰也是一张照片，没有文字，同学**没法对照着找到自己站的楼**。
+# 对"点选机位"这个用途，**可读性 > 写实度**。
 #
-# ⚠ 使用条款提醒：谷歌瓦片用于公开发布的网站，严格说需要对应的授权/配额。
-#   这里因为**图片是预生成并入库的**（运行时不请求谷歌），影响面小；
-#   若日后要大规模商用，需换成有明确授权的影像源。
+# 换成别的源时注意两点：
+#   ① 跑 `tools/verify_tile_crs.py <campus>` 确认坐标系（有的源是 GCJ-02，需平移）；
+#   ② 中文注记只有 OSM / 高德街道有；谷歌街道图在这块区域的中文标注不全。
+OSM_STREET = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+OSM_SUBDOMAINS = "abc"
+# 备选（保留备查，不建议直接用）：
+#   高德卫星  https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}
+#   谷歌卫星  https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}
 GOOGLE_SAT = "https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}"
 GOOGLE_SUBDOMAINS = "0123"
-DEFAULT_TILE_KEY = "google_sat"
+
+DEFAULT_TILE_KEY = "osm"
 _LOCK = threading.Lock()
 
 
@@ -243,10 +249,10 @@ def _render_tiles(template: str, template_key: str, z: int,
 
 def build_frame_image(south: float, west: float, north: float, east: float, *,
                       target_width: int = 1500, zoom: int | None = None,
-                      tile_url: str = GOOGLE_SAT,
+                      tile_url: str = OSM_STREET,
                       tile_key: str = DEFAULT_TILE_KEY,
                       tile_shift: tuple[float, float] = (0.0, 0.0),
-                      subdomains: str = GOOGLE_SUBDOMAINS,
+                      subdomains: str = OSM_SUBDOMAINS,
                       extra_headers: dict | None = None,
                       buildings: list[dict] | None = None,
                       building_style: dict | None = None,
@@ -383,10 +389,10 @@ def _cache_key(campus_key: str, target_width: int, zoom: int, fmt: str,
 def cached_frame_image(campus_key: str, south: float, west: float, north: float, east: float, *,
                        target_width: int = 1400, zoom: int | None = None, fmt: str = "jpg",
                        jpeg_quality: int = 85, progress=None,
-                       tile_url: str = GOOGLE_SAT,
+                       tile_url: str = OSM_STREET,
                        tile_key: str = DEFAULT_TILE_KEY,
                        tile_shift: tuple[float, float] = (0.0, 0.0),
-                       subdomains: str = GOOGLE_SUBDOMAINS,
+                       subdomains: str = OSM_SUBDOMAINS,
                        extra_headers: dict | None = None,
                        buildings: list[dict] | None = None,
                        building_style: dict | None = None) -> FrameImage:
