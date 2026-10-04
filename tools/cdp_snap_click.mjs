@@ -94,15 +94,20 @@ const PICK_PROBE = [
 
 const WAIT_READY = [
   "(() => {",
+  "  const out = {iframes: document.querySelectorAll('iframe').length, probes: []};",
   "  for (const f of document.querySelectorAll('iframe')) {",
-  "    let w; try { w = f.contentWindow; } catch (e) { continue; }",
-  "    if (!w) continue;",
-  "    try { if (w.eval(\"typeof snapToFootprint\") === 'function') {",
+  "    let w; try { w = f.contentWindow; } catch (e) { out.probes.push('cw:' + e); continue; }",
+  "    if (!w) { out.probes.push('null-cw'); continue; }",
+  "    let t;",
+  "    try { t = w.eval(\"typeof snapToFootprint\"); }",
+  "    catch (e) { out.probes.push('eval:' + e); continue; }",
+  "    out.probes.push(t);",
+  "    if (t === 'function') {",
   "      const r = f.getBoundingClientRect();",
-  "      return {ok: true, iframeRect: [r.left, r.top]};",
-  "    } } catch (e) {}",
+  "      return {ok: true, iframeRect: [r.left, r.top], diag: out};",
+  "    }",
   "  }",
-  "  return {ok: false};",
+  "  return {ok: false, diag: out};",
   "})()",
 ].join("\n");
 
