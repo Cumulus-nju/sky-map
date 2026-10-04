@@ -32,7 +32,9 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import math
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -76,9 +78,14 @@ DEFAULT_TILE_KEY = "osm"
 #
 # 2026-10-02：用户要求苏州**先别做、后面另行处理**，因此苏州保持瓦片。
 BASEMAP_SOURCE: dict[str, str] = {
-    "gulou": "vector",
-    "xianlin": "vector",
-    "suzhou": "tile",
+    # 2026-10-03：三校区**统一 2.5D 立体（轴测）风格**，对应用户给的参考图
+    # （站牌式地图：建筑挤出+墙面明暗+投影、树做圆簇、地面平面色块）。
+    #   "relief" —— 足迹挤出版（relief_basemap），鼓楼/仙林用
+    #   "glb"    —— 真三维模型轴测渲染（glb_relief），苏州用
+    #   "vector" —— 旧的平面自绘（仍在，随时可回退，改这个字典就行）
+    "gulou": "relief",
+    "xianlin": "relief",
+    "suzhou": "glb",
 }
 
 
@@ -124,7 +131,15 @@ class FrameImage:
         )
 
     def data_url(self) -> str:
-        return "data:image/png;base64," + base64.b64encode(self.png).decode("ascii")
+        """内嵌成 data URL。
+
+        ⚠ MIME 必须按**真实字节**标：瓦片路径缓存的是 JPEG，自绘路径是 PNG。
+        2026-10-03 之前这里一律写 `image/png`，虽然浏览器会靠内容嗅探渲染出来，
+        但标错格式属于埋雷（严格模式/某些客户端会直接不显示）。
+        """
+        head = self.png[:4]
+        mime = "image/jpeg" if head[:2] == b"\xff\xd8" else "image/png"
+        return f"data:{mime};base64," + base64.b64encode(self.png).decode("ascii")
 
 
 # ---------------------------------------------------------------- 投影
@@ -404,6 +419,64 @@ def _cache_key(campus_key: str, target_width: int, zoom: int, fmt: str,
     return IMAGE_CACHE / f"{campus_key}_{tile_key}_w{target_width}_z{zoom}.{fmt}"
 
 
+def find_cached(stem: Path) -> Path | None:
+    """找一个已缓存的底图（自动在 .png / .jpg 里挑存在的那个）。"""
+    for ext in (".png", ".jpg"):
+        p = stem.with_suffix(ext)
+        if p.exists() and p.stat().st_size > 0:
+            return p
+    return None
+
+
+def write_best_image(stem: Path, png_bytes: bytes, quality: int = 84) -> tuple[Path, bytes]:
+    """PNG 与 JPEG 各编一次，**存更小的那个**，返回 (路径, 字节)。
+
+    为什么要挑：底图要 base64 内嵌进 HTML，体积直接决定手机上打开快慢。
+    而"哪个更小"取决于内容是平色细线还是带渐变的渲染 ——
+    实测同一套自绘代码：鼓楼/仙林（平色）PNG 134 KB < JPEG 408 KB；
+    苏州（三维轴测带明暗）恰恰相反。所以不猜，直接比。
+    """
+    import io as _io
+    from PIL import Image
+
+    buf = _io.BytesIO()
+    Image.open(io.BytesIO(png_bytes)).convert("RGB").save(
+        buf, format="JPEG", quality=quality, optimize=True)
+    jpg = buf.getvalue()
+    p = stem.with_suffix(".png") if len(png_bytes) <= len(jpg) else stem.with_suffix(".jpg")
+    data = png_bytes if len(png_bytes) <= len(jpg) else jpg
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(data)
+    return p, data
+
+
+def write_meta(path: Path, meta: dict) -> None:
+    path.with_suffix(path.suffix + ".json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def read_meta(path: Path) -> dict:
+    return json.loads(path.with_suffix(path.suffix + ".json").read_text(encoding="utf-8"))
+
+
+def frame_matches(meta: dict, south: float, west: float, north: float, east: float,
+                  tol: float = 1e-9) -> bool:
+    """缓存里的外框范围是不是**当前**要的范围。
+
+    ⚠ 为什么需要这个（2026-10-03 发现）：缓存文件名只含 "校区+宽度+缩放级"，
+    **不含外框范围**。一旦外框被改（比如苏州这次从 2400×2200 m 改成 1612×1391 m），
+    旧图就会被当成新图返回 —— 底图是旧的、点选换算也是旧的，整张地图静默错位，
+    而且"看起来一切正常"。所以每次读缓存都要拿范围核对一遍。
+    """
+    for k, v in (("south", south), ("west", west), ("north", north), ("east", east)):
+        try:
+            if abs(float(meta.get(k)) - float(v)) > tol:
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
 def cached_frame_image(campus_key: str, south: float, west: float, north: float, east: float, *,
                        target_width: int = 1400, zoom: int | None = None, fmt: str = "jpg",
                        jpeg_quality: int = 85, progress=None,
@@ -431,7 +504,9 @@ def cached_frame_image(campus_key: str, south: float, west: float, north: float,
         try:
             import json as _json
             meta = _json.loads(meta_path.read_text(encoding="utf-8"))
-            return FrameImage(png=path.read_bytes(), **meta)
+            if frame_matches(meta, south, west, north, east):
+                return FrameImage(png=path.read_bytes(), **meta)
+            # 外框变了 -> 旧缓存作废（不然会静默返回错位的旧图）
         except Exception:
             pass      # 缓存坏了就重做，不要因此报错
 
@@ -470,23 +545,42 @@ def frame_image_for(campus_key: str, s: float, w: float, n: float, e: float, *,
 
     prefer:
         "auto"   —— 按 `BASEMAP_SOURCE` 配置决定（默认）
-        "vector" —— 强制自绘（缺数据会抛错，便于发现问题）
+        "vector" —— 强制平面自绘（缺数据会抛错，便于发现问题）
+        "relief" —— 强制 2.5D 立体自绘（足迹挤出，relief_basemap）
+        "glb"    —— 强制三维模型轴测渲染（glb_relief，目前只有苏州有数据）
         "tile"   —— 强制瓦片
 
-    两条路径返回的都是 `FrameImage`，坐标口径完全一致（自检过：图像四角等于外框四角），
+    三条自绘路径返回的都是 `FrameImage`，坐标口径完全一致（自检过：图像四角等于外框四角），
     所以上层（点选组件）完全不用关心底图是怎么来的。
     """
-    use_vector = prefer == "vector" or (prefer == "auto" and source_of(campus_key) == "vector")
+    src = prefer if prefer != "auto" else source_of(campus_key)
 
-    if use_vector:
+    if src in ("vector", "relief", "glb"):
         try:
+            if src == "glb":
+                import glb_relief
+                return glb_relief.cached_frame_image(campus_key, s, w, n, e,
+                                                     width=target_width)
+            if src == "relief":
+                import relief_basemap
+                return relief_basemap.cached_relief_frame(campus_key, s, w, n, e,
+                                                          width=target_width)
             import vector_basemap
             return vector_basemap.cached_vector_frame(campus_key, s, w, n, e,
                                                       width=target_width)
-        except Exception:
-            if prefer == "vector":
+        except Exception as exc:
+            # ⚠ 兜底必须**出声**（2026-10-03 的教训）：
+            #   原来这里是静默退回瓦片，结果"自绘渲染抛异常"被吞掉，页面照常显示一张
+            #   瓦片图 —— 看起来一切正常，实际风格/内容全错，白排查半天。
+            #   所以现在：① 打一行刺眼的 warning；② 在返回的 FrameImage 上留记号。
+            import traceback
+            sys.stderr.write(
+                f"\n[static_basemap] ⚠ 自绘底图失败（{campus_key}/{src}），"
+                f"已退回瓦片拼图 —— 这不是正常状态！\n"
+                f"    {type(exc).__name__}: {exc}\n"
+                + "".join("    " + l for l in traceback.format_exc().splitlines(True)[-6:]))
+            if prefer in ("vector", "relief", "glb"):
                 raise
-            # 自绘失败就退回瓦片，别让页面挂掉
     return cached_frame_image(campus_key, s, w, n, e, target_width=target_width, **tile_kwargs)
 
 

@@ -66,20 +66,43 @@ def _ring_extent(coords, acc):
 
 
 def buildings_extent(campus_key: str):
-    """校区 OSM 建筑的外接范围 (S, W, N, E)；没有数据返回 None。"""
+    """校区建筑的外接范围 (S, W, N, E)；没有数据返回 None。
+
+    苏州是特例：OSM 上只有 23 栋（2023 年启用的新校区），**不能**用来算外框。
+    但仓库里有**资产管理处总平面的 935 个精确足迹**（局部米制）+ 卫星影像配准参数，
+    所以先换算成经纬度再算 —— 这样苏州也能按"建筑实测范围 + 缓冲"这条统一规则走，
+    不用再靠人手估（老框比校园实际大 50%，校园在图里显得很小）。
+    """
     path = RAW / f"{campus_key}_buildings.geojson"
-    if not path.exists():
-        return None, 0
-    data = json.loads(path.read_text(encoding="utf-8"))
     ext = None
     n = 0
-    for feat in data.get("features", []):
-        geom = feat.get("geometry")
-        if not geom:
-            continue
-        ext = _ring_extent(geom.get("coordinates"), ext)
-        n += 1
+    if path.exists():
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for feat in data.get("features", []):
+            geom = feat.get("geometry")
+            if not geom:
+                continue
+            ext = _ring_extent(geom.get("coordinates"), ext)
+            n += 1
+    if n >= 50:
+        return ext, n
+
+    plan = suzhou_plan_extent()
+    if plan is not None:
+        return plan
     return ext, n
+
+
+def suzhou_plan_extent():
+    """从「总平面足迹 + 配准参数」算苏州校区建筑外接范围 -> (ext, 栋数)。"""
+    plan_path = RAW / "suzhou_plan_buildings.geojson"
+    georef_path = HERE / "data" / "suzhou_georef.json"
+    if not (plan_path.exists() and georef_path.exists()):
+        return None
+    import suzhou_georef
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    geo = suzhou_georef.Geo(suzhou_georef.load(georef_path))
+    return geo.extent_of(plan.get("features", [])), len(plan.get("features", []))
 
 
 def pad_extent(ext, pad_m: float):

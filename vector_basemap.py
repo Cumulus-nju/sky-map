@@ -192,48 +192,13 @@ def _area_rings(geom, props) -> list:
     return []
 
 
-def render_frame_image(campus: str, s: float, w: float, n: float, e: float, *,
-                       width: int = 2000) -> "object":
-    """画一张底图并返回 `static_basemap.FrameImage`（与瓦片路径同接口、同坐标口径）。
+def draw_ground_layers(d, proj, vec, bounds, z):
+    """画地图的「地面图层」：校园底色 -> 用地底色 -> 绿化 -> 水面 -> 道路。
 
-    坐标口径的关键：绘图范围与 origin/scale 都由**同一组取整后的世界像素**推出，
-    与瓦片路径（static_basemap）完全一致 —— 这样点选换算不用区分底图怎么来的。
+    从 render_frame_image 里抽出来的（2026-10-03），为的是立体渲染器
+    （relief_basemap）能复用同一套地面画法，避免两份代码各自漂移。
+    调用方负责先建好画布与 RGBA 的 ImageDraw。
     """
-    import static_basemap as sb
-    from PIL import Image, ImageDraw
-
-    vec_path = RAW / f"vector_{campus}.geojson"
-    if not vec_path.exists():
-        raise FileNotFoundError(
-            f"缺 {vec_path.name}，先跑 tools/fetch_vector_layers.py {campus}")
-    vec = _load_json(vec_path)
-    blds = _load_json(RAW / f"{campus}_buildings.geojson")
-    try:
-        bounds = _load_json(RAW / "campus_boundaries.json").get(campus, {})
-    except Exception:
-        bounds = {}
-
-    # 用 static_basemap 的世界像素公式，并把范围取整（对齐到整数像素）
-    ox = round(sb._lon_to_px(w, ZOOM))
-    oy = round(sb._lat_to_px(n, ZOOM))
-    span_x = max(1, round(sb._lon_to_px(e, ZOOM)) - ox)
-    span_y = max(1, round(sb._lat_to_px(s, ZOOM)) - oy)
-
-    W = int(width)
-    scale_x = W / span_x
-    H = max(1, int(round(span_y * scale_x)))
-    scale_y = H / span_y
-
-    # 把取整后的像素范围反解成经纬度，作为画布的地理范围
-    lat_n = sb._px_to_lat(oy, ZOOM)
-    lat_s = sb._px_to_lat(oy + span_y, ZOOM)
-    lon_w = sb._px_to_lon(ox, ZOOM)
-    lon_e = sb._px_to_lon(ox + span_x, ZOOM)
-    proj = Projector(lat_s, lon_w, lat_n, lon_e, W, H)
-    z = W / 1400.0
-
-    img = Image.new("RGB", (W, H), C["bg"])
-    d = ImageDraw.Draw(img, "RGBA")
     feats = vec["features"]
 
     def draw_polys(pred, color):
@@ -336,6 +301,51 @@ def render_frame_image(campus: str, s: float, w: float, n: float, e: float, *,
                            width=lw + max(1, int(round(1.6 * z))), joint="curve")
                 d.line(pts, fill=C[fill_key], width=lw, joint="curve")
 
+
+def render_frame_image(campus: str, s: float, w: float, n: float, e: float, *,
+                       width: int = 2000) -> "object":
+    """画一张底图并返回 `static_basemap.FrameImage`（与瓦片路径同接口、同坐标口径）。
+
+    坐标口径的关键：绘图范围与 origin/scale 都由**同一组取整后的世界像素**推出，
+    与瓦片路径（static_basemap）完全一致 —— 这样点选换算不用区分底图怎么来的。
+    """
+    import static_basemap as sb
+    from PIL import Image, ImageDraw
+
+    vec_path = RAW / f"vector_{campus}.geojson"
+    if not vec_path.exists():
+        raise FileNotFoundError(
+            f"缺 {vec_path.name}，先跑 tools/fetch_vector_layers.py {campus}")
+    vec = _load_json(vec_path)
+    blds = _load_json(RAW / f"{campus}_buildings.geojson")
+    try:
+        bounds = _load_json(RAW / "campus_boundaries.json").get(campus, {})
+    except Exception:
+        bounds = {}
+
+    # 用 static_basemap 的世界像素公式，并把范围取整（对齐到整数像素）
+    ox = round(sb._lon_to_px(w, ZOOM))
+    oy = round(sb._lat_to_px(n, ZOOM))
+    span_x = max(1, round(sb._lon_to_px(e, ZOOM)) - ox)
+    span_y = max(1, round(sb._lat_to_px(s, ZOOM)) - oy)
+
+    W = int(width)
+    scale_x = W / span_x
+    H = max(1, int(round(span_y * scale_x)))
+    scale_y = H / span_y
+
+    # 把取整后的像素范围反解成经纬度，作为画布的地理范围
+    lat_n = sb._px_to_lat(oy, ZOOM)
+    lat_s = sb._px_to_lat(oy + span_y, ZOOM)
+    lon_w = sb._px_to_lon(ox, ZOOM)
+    lon_e = sb._px_to_lon(ox + span_x, ZOOM)
+    proj = Projector(lat_s, lon_w, lat_n, lon_e, W, H)
+    z = W / 1400.0
+
+    img = Image.new("RGB", (W, H), C["bg"])
+    d = ImageDraw.Draw(img, "RGBA")
+    draw_ground_layers(d, proj, vec, bounds, z)
+
     # 5) 建筑（描边 + 填充，轮廓更清晰）
     for feat in blds.get("features", []):
         for ring in _rings_of(feat.get("geometry") or {}):
@@ -353,29 +363,29 @@ def render_frame_image(campus: str, s: float, w: float, n: float, e: float, *,
     )
 
 
-def cached_vector_frame(campus: str, s, w, n, e, *, width: int = 2000,
-                        quality: int = 88) -> "object":
-    """带本地缓存的版本（存 JPEG，体积小）；命中直接读，秒开。"""
-    import static_basemap as sb
-    from PIL import Image
+def cached_vector_frame(campus: str, s, w, n, e, *, width: int = 2000) -> "object":
+    """带本地缓存的版本（PNG/JPEG **自动挑更小的那个**）；命中直接读，秒开。
 
-    path = IMAGE_CACHE / f"{campus}_vector_w{width}.jpg"
-    meta_path = path.with_suffix(path.suffix + ".json")
-    if path.exists() and path.stat().st_size > 0 and meta_path.exists():
+    为什么要挑格式：底图要 base64 内嵌进 HTML，体积直接决定手机上打开快慢。
+    自绘是平色细线，PNG 通常小得多（2000px 鼓楼：PNG 134 KB vs JPEG 408 KB），
+    但三维轴测那种带明暗渐变的图恰好相反 —— 所以不猜，两者都编一遍比大小。
+    """
+    import static_basemap as sb
+
+    stem = IMAGE_CACHE / f"{campus}_vector_w{width}"
+    path = sb.find_cached(stem)
+    if path is not None:
         try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            return sb.FrameImage(png=path.read_bytes(), **meta)
+            meta = sb.read_meta(path)
+            if sb.frame_matches(meta, s, w, n, e):
+                return sb.FrameImage(png=path.read_bytes(), **meta)
         except Exception:
             pass
 
     fi = render_frame_image(campus, s, w, n, e, width=width)
-    img = Image.open(io.BytesIO(fi.png)).convert("RGB")
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=quality, optimize=True)
     meta = {k: getattr(fi, k) for k in (
         "width", "height", "zoom", "scale_x", "scale_y", "origin_x", "origin_y",
         "south", "west", "north", "east")}
-    IMAGE_CACHE.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(buf.getvalue())
-    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
-    return sb.FrameImage(png=buf.getvalue(), **meta)
+    path, data = sb.write_best_image(stem, fi.png)
+    sb.write_meta(path, meta)
+    return sb.FrameImage(png=data, **meta)

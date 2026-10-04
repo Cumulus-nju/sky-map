@@ -186,53 +186,83 @@ try:
 except Exception as exc:
     check("pnav 解析测试", False, f"{type(exc).__name__}: {exc}")
 
-print("\n[7] 自绘矢量底图：坐标口径必须与瓦片路径一致")
-print("     （两条路径返回同一个 FrameImage，点选换算不用区分来源 —— 口径错了就会 '点 A 存 B'）")
+print("\n[7] 自绘底图（平面 / 2.5D 立体 / 三维轴测）：坐标口径必须与瓦片路径一致")
+print("     （三条路径返回同一个 FrameImage，点选换算不用区分来源 —— 口径错了就会 '点 A 存 B'）")
+_META_FIELDS = ("width", "height", "zoom", "scale_x", "scale_y", "origin_x", "origin_y",
+                "south", "west", "north", "east")
 try:
+    import json as _json
+
     import static_basemap as _sb
 
     for key in CAMPUSES:
         src = _sb.source_of(key)
         print(f"  · {key}: 配置源 = {src}")
-        if src != "vector":
+        if src == "tile":
             continue
         s, w, n, e = frame_of(key)
-        fi = _sb.frame_image_for(key, s, w, n, e, target_width=700)
+        stem = _sb.IMAGE_CACHE / f"{key}_{src}_w2000"
+        have = next((q for q in (stem.with_suffix(".png"), stem.with_suffix(".jpg"))
+                     if q.exists()), None)
+        if have is None:
+            check(f"{key}: 已生成 {src} 底图存在", False, f"缺 {stem.name}.*")
+            continue
+        meta = _json.loads(have.with_suffix(have.suffix + ".json").read_text(encoding="utf-8"))
+        check(f"{key}: {src} 底图的外框与 campus_config 一致",
+              _sb.frame_matches(meta, s, w, n, e),
+              "外框改了就必须重新生成底图，否则整张图静默错位")
+        # ⚠ 关键防线（2026-10-03 的事故）：`frame_image_for` 在自绘抛异常时
+        #   **会退回瓦片拼图**（而且当时还是静默的）。如果只用"文件存在/读文件"来验，
+        #   就正好漏掉"渲染器其实坏了、页面拿到的是瓦片图"这种情况。
+        #   所以这里必须走**统一入口** + prefer=src（失败直接抛），并核对字节。
+        fi = _sb.frame_image_for(key, s, w, n, e, target_width=2000, prefer=src)
+        check(f"{key}[{src}]: 统一入口返回的就是自绘底图（没被静默换成瓦片）",
+              fi.png == have.read_bytes(),
+              f"入口 {len(fi.png)//1024} KB / 磁盘 {have.stat().st_size//1024} KB")
         tl = fi.px_to_latlng(0, 0)
         br = fi.px_to_latlng(fi.width, fi.height)
         ok_corners = (near(tl[0], n, 2e-3) and near(tl[1], w, 2e-3)
                       and near(br[0], s, 2e-3) and near(br[1], e, 2e-3))
-        check(f"{key}: 自绘图四角 == 外框四角（容差 2e-3°）", ok_corners,
+        check(f"{key}[{src}]: 自绘图四角 == 外框四角（容差 2e-3°）", ok_corners,
               f"左上({tl[0]:.6f},{tl[1]:.6f}) 右下({br[0]:.6f},{br[1]:.6f})")
-        # 往返闭合
         x0, y0 = fi.latlng_to_px(32.0569, 118.7744) if key == "gulou" else (fi.width / 2, fi.height / 2)
         lat, lon = fi.px_to_latlng(x0, y0)
         x1, y1 = fi.latlng_to_px(lat, lon)
-        check(f"{key}: 自绘图换算往返闭合", abs(x1 - x0) < 1e-6 and abs(y1 - y0) < 1e-6,
+        check(f"{key}[{src}]: 自绘图换算往返闭合", abs(x1 - x0) < 1e-6 and abs(y1 - y0) < 1e-6,
               f"Δ=({abs(x1 - x0):.2e},{abs(y1 - y0):.2e}) px")
-        # 与像素换算等价性（同瓦片路径那套自检）
         rows = frame_picker.assert_js_python_agree(fi, samples=4)
         worst = max(max(r["dlat"], r["dlon"]) for r in rows)
-        check(f"{key}: 自绘图 JS/Python 换算一致", worst < 1e-9, f"最大差 {worst:.2e}")
+        check(f"{key}[{src}]: 自绘图 JS/Python 换算一致", worst < 1e-9, f"最大差 {worst:.2e}")
 except Exception as exc:
     check("自绘底图坐标自检", False, f"{type(exc).__name__}: {exc}")
 
 print("\n[8] 预生成底图必须与 app 请求的宽度一致（守部署隐患）")
 print("     —— 不一致的话云端容器会**现场重新拉瓦片/渲染**：慢，且可能被限流")
 try:
+    import json as _json
+
     import static_basemap as _sb
     # app.py 里 render_picker 请求的宽度
     APP_WIDTH = 2000
+    SUFFIX = {"vector": "vector", "relief": "relief", "glb": "glb"}
     for key in CAMPUSES:
         src = _sb.source_of(key)
-        if src == "vector":
-            p = _sb.IMAGE_CACHE / f"{key}_vector_w{APP_WIDTH}.jpg"
+        if src in SUFFIX:
+            # 自绘路径的编码格式是"哪个小存哪个"，所以两种扩展名都找
+            stem = _sb.IMAGE_CACHE / f"{key}_{SUFFIX[src]}_w{APP_WIDTH}"
+            p = next((q for q in (stem.with_suffix(".png"), stem.with_suffix(".jpg"))
+                      if q.exists()), stem.with_suffix(".png"))
         else:
             z = sb.choose_zoom(*[frame_of(key)[i] for i in (0, 1, 2, 3)], APP_WIDTH)
             p = _sb.IMAGE_CACHE / f"{key}_osm_w{APP_WIDTH}_z{z}.jpg"
         ok = p.exists() and p.stat().st_size > 0
         check(f"{key}({src}): 预生成底图存在 {p.name}", ok,
               f"{p.stat().st_size // 1024} KB" if ok else "缺失 ⇒ 云端会现场生成")
+        if ok and p.with_suffix(p.suffix + ".json").exists():
+            meta = _json.loads(p.with_suffix(p.suffix + ".json").read_text(encoding="utf-8"))
+            check(f"{key}({src}): 预生成底图的外框与配置一致",
+                  _sb.frame_matches(meta, *frame_of(key)),
+                  "外框改了必须先重新生成底图再提交")
 except Exception as exc:
     check("预生成底图检查", False, f"{type(exc).__name__}: {exc}")
 
