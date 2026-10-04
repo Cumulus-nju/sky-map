@@ -229,8 +229,6 @@ def main() -> None:
     existing = load_submissions()
     with st.sidebar:
         st.metric("已收稿", f"{len(existing)} 幅")
-        st.page_link(S.MAP_FILE, label="🗺 看打卡点地图", icon=None,
-                     help="已收到的作品汇总成的交互地图")
 
     # ---------------- 第一步：选校区与机位 ----------------
     st.subheader("① 选择校区并在图上点出机位")
@@ -238,11 +236,7 @@ def main() -> None:
     campus_key = st.radio(
         "校区", list(CAMPUSES), format_func=lambda k: key_labels[k], horizontal=True, key="campus_key"
     )
-    st.caption(
-        "在地图上**点一下**你拍照站的位置（越准越好）；点错了再点一次即可覆盖。"
-        "蓝框是**校园及周边**范围，点在里面就对了。"
-        "请用默认的**街道底图**对准（卫星影像有坐标偏移，仅供看地形）。"
-    )
+    st.caption("在地图上**点一下**你拍照站的位置（越准越好，**必填**）；点错了再点一次即可覆盖。")
 
     state_key = f"picked_{campus_key}"
     picked = st.session_state.get(state_key)

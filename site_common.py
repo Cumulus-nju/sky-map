@@ -26,7 +26,7 @@ ADMIN_PAGE = "管理员"
 
 # 构建版本：显示在侧边栏，用来确认线上部署的是哪一版。
 # 改代码时**一起改这个**，push 后刷新线上即可确认是否真的更新了。
-BUILD = "2026-10-04i"
+BUILD = "2026-10-04j"
 
 # 页面文件（Streamlit 按文件路由：根目录 app.py = "/"，pages/ 下的各占一个路径）
 SUBMIT_FILE = "app.py"
@@ -118,20 +118,18 @@ def take_nav() -> tuple[float, float, int] | None:
 
 
 def nav(current: str) -> None:
-    """侧边栏导航。管理员入口只在登录后出现，避免同学误入。
+    """侧边栏导航。
 
-    ⚠ 侧边栏**不再显示调试信息**（当前位置 / 构建版本 / 存储后端）——
-    那些是给组织者看的，同学不需要；已按用户要求移到**管理后台**
-    （2026-10-04：「这个不要在边栏显示，可以在管理员里面显示」）。
-    `current` 参数保留只为兼容调用方，侧边栏已不再用它。
+    ⚠ **页面入口交给 Streamlit 自动导航**（侧边栏顶部那个），这里不再重复放
+    `page_link` —— 用户 2026-10-04 要求简洁化，而"打卡点地图"当时在侧边栏
+    出现了**三次**（自动导航 + 这里的 page_link + 投稿页自己的"看打卡点地图"）。
+
+    这里只保留站点名，以及**管理后台入口**（登录后才出现，避免同学误入）。
+    `current` 参数保留只为兼容调用方。
     """
     st.sidebar.markdown(f"### 🌤 {SITE}")
-    st.sidebar.divider()
-    st.sidebar.page_link(SUBMIT_FILE, label="📝 投稿", icon=None,
-                         help="同学在这里提交作品并点选机位")
-    st.sidebar.page_link(MAP_FILE, label="🗺 打卡点地图", icon=None,
-                         help="已经收到的作品汇总成的交互地图")
     if is_admin():
+        st.sidebar.divider()
         st.sidebar.page_link(ADMIN_FILE, label="🔧 管理后台", icon=None,
                              help="审核、修改、删除投稿")
 
