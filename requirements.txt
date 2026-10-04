@@ -8,6 +8,14 @@
 # 本地开发/需要重抓底图时，再额外装：
 #       pip install -r requirements-local.txt
 
+# ⚠ 2026-10-04：下面这行注释是为了让 Streamlit Cloud **重建环境 / 重启容器**。
+#   背景：只改 .py 文件时，云端可能只做**模块级热重载** —— 结果是
+#   `site_common` 已是新版、`frame_picker` 还是旧模块，于是
+#   `build_picker_html() got an unexpected keyword argument 'roofs'`
+#   在线上报 TypeError（本地完全正常，因为本地是新进程）。
+#   症状与老的"文件全对、进程里加载的模块是旧的"完全一致 ⇒ 必须 Reboot/重建。
+#   （这个坑值得记住：**加了新函数参数后，光 push 不一定生效**。）
+
 streamlit>=1.30
 streamlit-folium>=0.18
 folium>=0.15
