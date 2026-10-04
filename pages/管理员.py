@@ -112,6 +112,13 @@ if not login_gate():
 
 S.nav(S.ADMIN_PAGE)
 
+# 站点状态：构建版本 + 存储后端。
+# 原来挂在**同学端侧边栏**上，用户 2026-10-04 要求移到后台 ——
+# 这两项是给组织者看的（确认线上跑的是哪一版 / 云端数据库有没有接上），
+# 同学不需要看。
+st.caption(f"🛠 构建版本 `{S.BUILD}`")
+S.storage_status()
+
 subs = load_submissions()
 pending = [s for s in subs if s.loc_verify or not s.has_point]
 

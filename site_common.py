@@ -26,7 +26,7 @@ ADMIN_PAGE = "管理员"
 
 # 构建版本：显示在侧边栏，用来确认线上部署的是哪一版。
 # 改代码时**一起改这个**，push 后刷新线上即可确认是否真的更新了。
-BUILD = "2026-10-04g"
+BUILD = "2026-10-04h"
 
 # 页面文件（Streamlit 按文件路由：根目录 app.py = "/"，pages/ 下的各占一个路径）
 SUBMIT_FILE = "app.py"
@@ -118,9 +118,14 @@ def take_nav() -> tuple[float, float, int] | None:
 
 
 def nav(current: str) -> None:
-    """侧边栏导航。管理员入口只在登录后出现，避免同学误入。"""
+    """侧边栏导航。管理员入口只在登录后出现，避免同学误入。
+
+    ⚠ 侧边栏**不再显示调试信息**（当前位置 / 构建版本 / 存储后端）——
+    那些是给组织者看的，同学不需要；已按用户要求移到**管理后台**
+    （2026-10-04：「这个不要在边栏显示，可以在管理员里面显示」）。
+    `current` 参数保留只为兼容调用方，侧边栏已不再用它。
+    """
     st.sidebar.markdown(f"### 🌤 {SITE}")
-    st.sidebar.caption("南京大学校园天空摄影大赛 · 南赫学院 × 摄影社")
     st.sidebar.divider()
     st.sidebar.page_link(SUBMIT_FILE, label="📝 投稿", icon=None,
                          help="同学在这里提交作品并点选机位")
@@ -129,18 +134,17 @@ def nav(current: str) -> None:
     if is_admin():
         st.sidebar.page_link(ADMIN_FILE, label="🔧 管理后台", icon=None,
                              help="审核、修改、删除投稿")
-    st.sidebar.divider()
-    st.sidebar.caption(f"当前位置：**{current}**")
-    st.sidebar.caption(f"构建版本 `{BUILD}`")
-    _storage_badge()
 
 
-def _storage_badge() -> None:
-    """在侧边栏显示当前存储后端 —— 一眼看出云端有没有接上数据库。
+def storage_status() -> None:
+    """显示当前存储后端 —— 一眼看出云端有没有接上数据库。
 
     为什么需要它：没配 SUPABASE_URL/KEY 时会静默退回本地文件存储，
-    而云端容器重启就清空文件系统，同学投的稿会全部丢失。这个徽标让
-    "没接上数据库"变成可见状态，而不是等到丢稿才发现。
+    而云端容器重启就清空文件系统，同学投的稿会全部丢失。让"没接上数据库"
+    变成可见状态，而不是等到丢稿才发现。
+
+    ⚠ 原来写死 `st.sidebar`；用户 2026-10-04 要求别在同学端侧边栏显示，
+    已移到管理后台 ⇒ 改成输出到**主区**（`st`）。
     """
     try:
         from store import storage_kind
@@ -149,9 +153,9 @@ def _storage_badge() -> None:
     except Exception:
         return
     if kind == "supabase":
-        st.sidebar.caption("🗄 存储：Supabase 云端（投稿持久保存）")
+        st.caption("🗄 存储：Supabase 云端（投稿持久保存）")
     else:
-        st.sidebar.warning(
+        st.warning(
             "⚠️ 当前为**本地临时存储**：服务器重启会清空所有投稿！\n\n"
             "请在应用设置里配置 Supabase 的 `SUPABASE_URL` / `SUPABASE_KEY`。",
             icon="🗄",

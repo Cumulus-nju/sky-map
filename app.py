@@ -224,17 +224,13 @@ def main() -> None:
         )
 
     st.title("🌤 天光云影 · 校园天空摄影大赛投稿")
-    st.caption("南京大学校园天空摄影大赛 · 南赫学院 × 南京大学摄影社 · 征稿 2026-10-08 ~ 2026-11-15")
 
     idx = landmark_index()
     existing = load_submissions()
-    located = sum(1 for s in existing if s.has_point)
     with st.sidebar:
         st.metric("已收稿", f"{len(existing)} 幅")
-        st.metric("已自动定点", f"{located} 幅")
         st.page_link(S.MAP_FILE, label="🗺 看打卡点地图", icon=None,
                      help="已收到的作品汇总成的交互地图")
-        st.caption("所有投稿落盘在 `data/` 目录；组织方跑一次地图生成即可汇总。")
 
     # ---------------- 第一步：选校区与机位 ----------------
     st.subheader("① 选择校区并在图上点出机位")
@@ -283,7 +279,6 @@ def main() -> None:
 
     # ---------------- 第二步：上传照片 ----------------
     st.subheader("② 上传作品")
-    st.caption("建议直接传**手机原图**：能自动读出拍摄时间与器材，也方便溯源；微信压缩版会丢失这些信息。")
     upload = st.file_uploader("选择照片", type=["jpg", "jpeg", "png", "heic", "webp", "tif", "tiff"])
 
     exif: dict = {}
@@ -316,7 +311,7 @@ def main() -> None:
         )
     with f2:
         contact = st.text_input("联系方式（学号 / 微信 / 邮箱）", help="仅用于发放奖品与版权确认，不公开")
-        weather = st.selectbox("天气现象 *", WEATHER_PRESETS)
+        weather = st.text_input("天气现象（可选）", placeholder="例：晚霞 / 火烧云")
         weather_detail = st.text_input("天象细节（可选）", placeholder="例：高积云 + 落日侧光，地平线有层积云")
 
     note = st.text_area("拍摄手记 / 机位提示（会展示在地图上）", height=90,
