@@ -357,9 +357,13 @@ try:
     _tot = sum(len(v) for v in _rb2.LABEL_LANDMARKS.values())
     check("标志物名单里的名字都存在于 campus_config.landmarks", not _miss,
           f"共 {_tot} 个；缺失={_miss}")
-    check("标志物每校区 4~8 个（宁少勿多，不要标满）",
-          all(4 <= len(v) <= 8 for v in _rb2.LABEL_LANDMARKS.values()),
-          str({k: len(v) for k, v in _rb2.LABEL_LANDMARKS.items()}))
+    # 用户 2026-10-04 最终决定**底图不要任何标注** ⇒ 白名单为空是**正常状态**；
+    # 非空时必须每校区 4~8 个（宁少勿多，别标满）。
+    _lm = _rb2.LABEL_LANDMARKS
+    check("标志物配置合法（空 = 用户决定不标；非空则每校区 4~8 个）",
+          (not _lm) or all(4 <= len(v) <= 8 for v in _lm.values()),
+          "空 —— 已按用户要求关闭" if not _lm
+          else str({k: len(v) for k, v in _lm.items()}))
     check("蓝色虚线已移除（用户改主意，换成标志物）",
           not hasattr(_rb2, "DRAW_CAMPUS_BOUNDARY"))
     _alias_bad = [k for k in _rb2.LABEL_ALIAS
