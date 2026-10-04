@@ -558,6 +558,19 @@ def _render(campus: str, s: float, w: float, n: float, e: float, *, width: int,
     for _, name in keys:
         drawn += draw_group(name, layer="3d")
 
+    # 校园范围**蓝色虚线** —— 复用 relief_basemap 那一套（配色/线宽/虚线节奏三校区统一）。
+    # 苏州的楼是模型渲染，不存在"校外高楼挡视线"的问题；但**校园范围**这条线一样要画，
+    # 否则三张底图不一致，同学在苏州投稿时不知道边界在哪。
+    try:
+        import relief_basemap as _rb
+        _bounds = json.loads((RAW / "campus_boundaries.json")
+                             .read_text(encoding="utf-8")).get(campus, {})
+        if _rb.DRAW_CAMPUS_BOUNDARY:
+            _rb._draw_campus_boundary(d, proj, _bounds, img.width / 1400.0)
+    except Exception as exc:                     # 画不上不能连累整张底图
+        import sys as _sys
+        print(f"[glb] 校园范围虚线没画上（{type(exc).__name__}: {exc}）", file=_sys.stderr)
+
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
     return sb.FrameImage(png=buf.getvalue(), width=W, height=H, zoom=ZOOM,
@@ -575,8 +588,15 @@ def _style_tag():
         g = GEOREF.read_text(encoding="utf-8")
     except Exception:
         g = ""
+    # 校园范围虚线用的是 relief_basemap 的常量，也得进指纹（改了它苏州要重渲）
+    try:
+        import relief_basemap as _rb
+        btag = (f"{_rb.DRAW_CAMPUS_BOUNDARY}|{_rb.BOUNDARY_COLOR}|"
+                f"{_rb.BOUNDARY_WIDTH}|{_rb.BOUNDARY_DASH}|{_rb.BOUNDARY_GAP}")
+    except Exception:
+        btag = "none"
     raw = (f"{VIEW_H}|{LIGHT_H.tolist()}|{WALL_MIN}|{WALL_MAX}|{ROOF_F}|{EXAG}"
-           f"|{MIN_AREA_PX}|{PAL}|{DETAIL_SKIP}|{NAME_TINT}|{g}")
+           f"|{MIN_AREA_PX}|{PAL}|{DETAIL_SKIP}|{NAME_TINT}|{g}|{btag}")
     return hashlib.md5(raw.encode("utf-8")).hexdigest()[:10]
 
 

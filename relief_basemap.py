@@ -133,6 +133,22 @@ AO_ALPHA = 96                   # 底部遮蔽的不透明度（0~255）
 FLOOR_LINE_ALPHA = 92           # 楼层线的不透明度
 ROOF_MIN_PX = 16.0              # 屋顶小于这个尺寸就不做女儿墙/家具（做了反而脏）
 
+# ------------------------------------------- 校园范围虚线 + 校外"挡视线"的高楼
+# 用户 2026-10-04 要求：
+#   ① 「鼓楼校区南边有两三栋太高的**非学校**的楼，遮着学校内部建筑了，把这几个去掉」
+#      —— 轴测是**向上挤出**的：南边的高楼往上长，正好横跨校园内部 ⇒ 直接不画。
+#      判据 = 在**校园边界南侧**且高度 ≥ SKIP_OUTSOUTH_H。
+#      实测正好命中那 3 栋（两栋 132 m + 广海大厦 120 m），下一档只到 100 m ⇒ 不会误伤。
+#   ② 「在图上实际地标一下校园的范围（蓝色虚线之类的）」
+#      —— ⚠ 这与**外框 frame** 不是一回事：frame = 校园 + 周边 150 m 缓冲，
+#      而这条虚线画的是**校园本身的边界**（`data/raw/campus_boundaries.json`）。
+DRAW_CAMPUS_BOUNDARY = True
+BOUNDARY_COLOR = (38, 108, 214)     # 蓝色虚线（用户要求）
+BOUNDARY_WIDTH = 3
+BOUNDARY_DASH = 14.0                # 实线段长（像素，随 z 缩放）
+BOUNDARY_GAP = 9.0                  # 间隔（像素，随 z 缩放）
+SKIP_OUTSOUTH_H = 120.0             # 校园南侧超过这个高度的**校外**建筑不画
+
 
 def _tint_of(props: dict) -> tuple[int, int, int]:
     t = str(props.get("building") or "").strip()
@@ -166,6 +182,87 @@ def _point_in_ring(x, y, ring) -> bool:
             if x < xin:
                 inside = not inside
     return inside
+
+
+def _skipped_indexes(blds, bounds) -> set:
+    """挑出**不画**的建筑索引：校园南侧那些又高又在校园外的楼。
+
+    用户 2026-10-04：「鼓楼校区南边有两三栋太高的**非学校**的楼，遮着学校内部建筑了」。
+    轴测是**向上挤出**的 —— 南边的高楼往上长，正好横跨校园内部的建筑；而它们又不在
+    校园里，留着只会挡视线 ⇒ 直接不画（连同它们的投影一起，因为投影也在 items 里）。
+
+    ⚠ 用自带的 `_point_in_ring`（射线法）判位置，**千万不要引入 shapely**：
+    云端 `requirements.txt` 里没有 shapely（它只用于本地抓图/建模），
+    一旦底图缓存失效需要在云端重新渲染，就会 ImportError ⇒ 退回瓦片。
+    """
+    geo = (bounds or {}).get("geojson")
+    if not geo:
+        return set()
+    try:
+        rings = geo["coordinates"]
+    except Exception:
+        return set()
+    outer = rings[0] if rings else []          # 只取外环求南界
+    if len(outer) < 3:
+        return set()
+    s_lat = min(pt[1] for pt in outer)
+
+    skip = set()
+    for i, feat in enumerate(blds.get("features", [])):
+        props = feat.get("properties") or {}
+        if _height_m(props, i) < SKIP_OUTSOUTH_H:
+            continue
+        for ring in _rings_of(feat.get("geometry") or {}):
+            if len(ring) < 3:
+                continue
+            cy = sum(p[1] for p in ring) / len(ring)
+            if cy < s_lat:                     # 质心在校园南界之外
+                skip.add(i)
+                break
+    return skip
+
+
+def _dashed_polygon(d, pts, color, width, dash, gap) -> None:
+    """画**虚线**多边形（PIL 没有原生虚线，只能按段拆）。`pts` 已是像素坐标。"""
+    n = len(pts)
+    for i in range(n):
+        x0, y0 = pts[i]
+        x1, y1 = pts[(i + 1) % n]
+        seg = math.hypot(x1 - x0, y1 - y0)
+        if seg <= 0.5:
+            continue
+        ux, uy = (x1 - x0) / seg, (y1 - y0) / seg
+        t = 0.0
+        while t < seg:
+            e = min(t + dash, seg)
+            d.line([(x0 + ux * t, y0 + uy * t), (x0 + ux * e, y0 + uy * e)],
+                   fill=color, width=width)
+            t = e + gap
+
+
+def _draw_campus_boundary(d, proj, bounds, z) -> None:
+    """在底图上画**校园范围**的蓝色虚线。
+
+    ⚠ 与 `frame`（= 校园 + 周边 150 m 缓冲，也是整张图的外框）**不是一回事**：
+    这条线画的是**校园本身的边界**（`data/raw/campus_boundaries.json` 的 geojson），
+    让同学一眼看出"哪儿才算校园里"。
+
+    画两遍：先白色略粗打底、再蓝色 —— 这样压在深色屋顶或浅色地面上都看得清。
+    """
+    geo = (bounds or {}).get("geojson")
+    if not geo:
+        return
+    try:
+        rings = geo["coordinates"]
+    except Exception:
+        return
+    dash, gap = BOUNDARY_DASH * z, BOUNDARY_GAP * z
+    for ring in rings:
+        pts = [proj.pt(lo, la) for lo, la in ring]
+        if len(pts) < 3:
+            continue
+        _dashed_polygon(d, pts, (255, 255, 255), BOUNDARY_WIDTH + 2, dash, gap)
+        _dashed_polygon(d, pts, BOUNDARY_COLOR, BOUNDARY_WIDTH, dash, gap)
 
 
 def _roof_furniture(ring, seed, ppm, exag: float):
@@ -282,9 +379,18 @@ def roof_shapes(campus: str, s, w, n, e, *, width: int = 2000) -> dict:
     P = _project(s, w, n, e, width)
     proj, ppm = P["proj"], P["ppm"]
     blds = _load_json(RAW / f"{campus}_buildings.geojson")
+    try:
+        bounds = _load_json(RAW / "campus_boundaries.json").get(campus, {})
+    except Exception:
+        bounds = {}
+    # ⚠ 必须和 `_render` 用**同一套排除**：底图不画那几栋楼了，吸附却还认得它们的话，
+    #   同学点到那片空白会被"吸"到一栋看不见的楼上（几何不同源 = 静默错位）。
+    skip = _skipped_indexes(blds, bounds)
 
     items = []
     for idx, feat in enumerate(blds.get("features", [])):
+        if idx in skip:
+            continue
         props = feat.get("properties") or {}
         dz = _height_m(props, idx) * ppm * EXAG
         if dz < 1.0:
@@ -467,15 +573,22 @@ def _draw_building(d, it, z, floor_px):
 
 
 def _draw_scene(img, d, proj, blds, vec, px_per_m, z, *, shadows=True, trees=True,
-                campus: str | None = None):
+                campus: str | None = None, skip=None):
     """把**建筑（轴测挤出 + 细节）与树（圆簇）**按同一套"远近"顺序画出来。
 
     树和建筑必须一起排序：树要能挡住后面的楼，楼也要能挡住后面的树。
+
+    `skip` = 不画的建筑索引集合（校外挡视线的南侧高楼，见 `_skipped_indexes`）。
+    在这里排除，**投影也一并排除** —— 因为投影是由同一份 `items` 生成的，
+    否则会出现"楼没了、影子还在"。
     """
     from PIL import Image, ImageDraw, ImageFilter
 
+    skip = skip or set()
     items = []          # dict: kind / ring|center / dz|r / key
     for idx, feat in enumerate(blds.get("features", [])):
+        if idx in skip:
+            continue
         props = feat.get("properties") or {}
         dz = _height_m(props, idx) * px_per_m * EXAG
         pal = _palette(props, idx, z, campus)
@@ -604,12 +717,15 @@ def _render(campus, s, w, n, e, *, width, shadows):
 
     P = _project(s, w, n, e, width)
     proj, z, W, H, ppm = P["proj"], P["z"], P["W"], P["H"], P["ppm"]
+    skip = _skipped_indexes(blds, bounds)
 
     img = Image.new("RGB", (W, H), C["bg"])
     d = ImageDraw.Draw(img, "RGBA")
     vb.draw_ground_layers(d, proj, vec, bounds, z)      # 地面：平面色块，不动
     img, d = _draw_scene(img, d, proj, blds, vec, ppm, z,
-                         shadows=shadows, trees=True, campus=campus)
+                         shadows=shadows, trees=True, campus=campus, skip=skip)
+    if DRAW_CAMPUS_BOUNDARY:                            # 校园范围蓝色虚线
+        _draw_campus_boundary(d, proj, bounds, z)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
@@ -671,6 +787,8 @@ def _style_tag() -> str:
     """
     raw = (f"{VIEW}|{LIGHT}|{SHADOW}|{SHADOW_ALPHA}|{SHADOW_BLUR}|{EXAG}|"
            f"{WALL_TOP}|{WALL_SIDE}|{ROOF}|{sorted(WALL_SIDE_BY_CAMPUS.items())}|"
+           f"{DRAW_CAMPUS_BOUNDARY}|{BOUNDARY_COLOR}|{BOUNDARY_WIDTH}|"
+           f"{BOUNDARY_DASH}|{BOUNDARY_GAP}|{SKIP_OUTSOUTH_H}|"
            f"{_trees_fingerprint()}")
     return hashlib.md5(raw.encode("utf-8")).hexdigest()[:10]
 

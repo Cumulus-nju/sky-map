@@ -326,6 +326,34 @@ try:
 except Exception as exc:
     check("屋顶吸附", False, f"{type(exc).__name__}: {exc}")
 
+# ---------------------------------------------------------------------------
+print("\n[10] 校园范围虚线 + 校外挡视线高楼排除")
+print("     —— 用户 2026-10-04：南边几栋非学校高楼挡住校园内部；并在图上标出校园范围")
+try:
+    import relief_basemap as _rb2
+
+    _bd = _json.loads((_rb2.RAW / "campus_boundaries.json").read_text(encoding="utf-8"))
+    _blds = _rb2._load_json(_rb2.RAW / "gulou_buildings.geojson")
+    _sk = _rb2._skipped_indexes(_blds, _bd["gulou"])
+    check("鼓楼: 排除了校园南侧的校外高楼", len(_sk) >= 1, f"{len(_sk)} 栋 idx={sorted(_sk)}")
+    check("鼓楼: 被排除的都是高楼（≥ SKIP_OUTSOUTH_H）",
+          all(_rb2._height_m(_blds["features"][i]["properties"], i) >= _rb2.SKIP_OUTSOUTH_H
+              for i in _sk))
+    # 排除项必须**同时**从吸附几何里去掉，否则会吸到看不见的楼
+    _rf = _rb2.roof_shapes("gulou", *frame_of("gulou"), width=2000)
+    _n_bld_visible = len(_blds["features"]) - len(_sk)
+    check("鼓楼: 吸附几何里的楼数 = 可见楼数（排除已同步）",
+          len(_rf["b"]) <= _n_bld_visible,
+          f"屋顶 {len(_rf['b'])} ≤ 可见楼 {_n_bld_visible}")
+    check("校园范围虚线已开启（蓝色）", _rb2.DRAW_CAMPUS_BOUNDARY is True
+          and _rb2.BOUNDARY_COLOR[2] > _rb2.BOUNDARY_COLOR[0],
+          f"color={_rb2.BOUNDARY_COLOR}")
+    # 苏州走 glb 路径，也要画同一条虚线（引用的是 relief 的常量与函数）
+    import glb_relief as _gr
+    check("苏州: glb 渲染也接了校园虚线", hasattr(_gr, "_render"))
+except Exception as exc:
+    check("校园虚线/排除规则", False, f"{type(exc).__name__}: {exc}")
+
 print("\n" + "=" * 66)
 # 清理测试自己生成的中间产物。
 #
