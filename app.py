@@ -269,11 +269,9 @@ def main() -> None:
         picked = st.session_state.get(state_key)
         if picked:
             st.success(f"已选机位：{picked[0]:.6f}, {picked[1]:.6f}")
-        else:
-            st.warning("还没点选机位 —— 也可以只在下面手填位置描述，系统会尝试自动匹配")
     with right:
         loc_text = st.text_input(
-            "位置描述（可选，但强烈建议填）",
+            "位置描述（可选，供人工校对）",
             placeholder="例：北大楼前草坪、图书馆南侧台阶、操场看台…",
         )
 
@@ -321,6 +319,7 @@ def main() -> None:
 
     # ---------------- 提交 ----------------
     if st.button("🚀 提交投稿", type="primary", use_container_width=True):
+        picked = st.session_state.get(state_key)   # 先取出来，下面的必填校验要用
         problems = []
         if not title.strip():
             problems.append("作品名")
@@ -328,6 +327,10 @@ def main() -> None:
             problems.append("姓名/昵称")
         if upload is None:
             problems.append("照片")
+        if not picked:
+            # 用户 2026-10-04：机位改成**必填**（以图上点选为准）；
+            # 位置描述不再参与自动定位，只作为后期人工校对的依据。
+            problems.append("机位（在图上点选）")
         if not agree:
             problems.append("原创与授权声明")
         if problems:
@@ -335,7 +338,6 @@ def main() -> None:
             return
 
         exif_pt = (exif.get("lat"), exif.get("lon")) if exif.get("has_gps") else None
-        picked = st.session_state.get(state_key)
         res = resolve_location(
             campus_key=campus_key, picked=picked, exif=exif_pt, text=loc_text, index=idx
         )
