@@ -133,21 +133,34 @@ AO_ALPHA = 96                   # 底部遮蔽的不透明度（0~255）
 FLOOR_LINE_ALPHA = 92           # 楼层线的不透明度
 ROOF_MIN_PX = 16.0              # 屋顶小于这个尺寸就不做女儿墙/家具（做了反而脏）
 
-# ------------------------------------------- 校园范围虚线 + 校外"挡视线"的高楼
-# 用户 2026-10-04 要求：
+# ------------------------------------- 校外"挡视线"的高楼 + 底图上的标志物标注
+# 用户 2026-10-04 的两次要求：
 #   ① 「鼓楼校区南边有两三栋太高的**非学校**的楼，遮着学校内部建筑了，把这几个去掉」
 #      —— 轴测是**向上挤出**的：南边的高楼往上长，正好横跨校园内部 ⇒ 直接不画。
 #      判据 = 在**校园边界南侧**且高度 ≥ SKIP_OUTSOUTH_H。
 #      实测正好命中那 3 栋（两栋 132 m + 广海大厦 120 m），下一档只到 100 m ⇒ 不会误伤。
-#   ② 「在图上实际地标一下校园的范围（蓝色虚线之类的）」
-#      —— ⚠ 这与**外框 frame** 不是一回事：frame = 校园 + 周边 150 m 缓冲，
-#      而这条虚线画的是**校园本身的边界**（`data/raw/campus_boundaries.json`）。
-DRAW_CAMPUS_BOUNDARY = True
-BOUNDARY_COLOR = (38, 108, 214)     # 蓝色虚线（用户要求）
-BOUNDARY_WIDTH = 3
-BOUNDARY_DASH = 14.0                # 实线段长（像素，随 z 缩放）
-BOUNDARY_GAP = 9.0                  # 间隔（像素，随 z 缩放）
 SKIP_OUTSOUTH_H = 120.0             # 校园南侧超过这个高度的**校外**建筑不画
+
+#   ② 起初要"校园范围蓝色虚线"，随即改成：「算了，还是不要蓝色虚线了，
+#      改成对几个标志物（只要几个）在图中做标注，这样也能帮同学们找准位置」。
+#      ⚠ **只标"同学认得的"** —— 这才是关键。文档里记着当初放弃地标标注的原因：
+#      `landmarks` 里混着"天文与空间科学学院"这类**学术楼名**，同学看了没概念、
+#      标了反而是干扰。所以这里用**白名单**，按"标志性建筑 / 生活设施 / 自然地物"挑，
+#      每校区 5~6 个，宁少勿多。
+# 每项 = (名字, 文字摆放方向)。方向是用来**错开**挨得近的几个点的 ——
+# 北大楼 / 大礼堂 / 北园草坪 在现实里几乎挤在一起，全往右放会叠成一团（第一版就是这样）。
+LABEL_LANDMARKS: dict[str, list[tuple[str, str]]] = {
+    "gulou": [("北大楼", "top"), ("大礼堂", "right"), ("北园草坪", "bottom"),
+              ("南京大学图书馆（鼓楼）", "right"), ("体育馆", "right")],
+    "xianlin": [("杜厦图书馆", "right"), ("南雍山", "left"), ("藜照湖", "bottom"),
+                ("二源广场", "right"), ("恩玲剧场", "bottom"), ("三组团操场", "right")],
+    "suzhou": [("图书馆", "right"), ("北大楼", "top"), ("环形食堂", "right"),
+               ("苏式园林", "right"), ("庄里山", "left"), ("运动场（西区）", "right")],
+}
+LABEL_DOT = (206, 78, 40)           # 圆点（橙红，与地图图例同色系）
+LABEL_TEXT = (34, 34, 40)           # 文字颜色
+LABEL_STROKE = (255, 255, 255)      # 白描边：压在深色屋顶/绿树上也读得出
+LABEL_FONT_PX = 42                  # 字号（底图宽 2000 时的像素）
 
 
 def _tint_of(props: dict) -> tuple[int, int, int]:
@@ -222,47 +235,51 @@ def _skipped_indexes(blds, bounds) -> set:
     return skip
 
 
-def _dashed_polygon(d, pts, color, width, dash, gap) -> None:
-    """画**虚线**多边形（PIL 没有原生虚线，只能按段拆）。`pts` 已是像素坐标。"""
-    n = len(pts)
-    for i in range(n):
-        x0, y0 = pts[i]
-        x1, y1 = pts[(i + 1) % n]
-        seg = math.hypot(x1 - x0, y1 - y0)
-        if seg <= 0.5:
-            continue
-        ux, uy = (x1 - x0) / seg, (y1 - y0) / seg
-        t = 0.0
-        while t < seg:
-            e = min(t + dash, seg)
-            d.line([(x0 + ux * t, y0 + uy * t), (x0 + ux * e, y0 + uy * e)],
-                   fill=color, width=width)
-            t = e + gap
+def _draw_landmarks(d, proj, campus) -> int:
+    """在底图上标注几个**标志物**，帮同学对照着找位置（返回画了几个）。
 
+    用户 2026-10-04：「不要蓝色虚线了，改成对几个标志物（只要几个）在图中做标注，
+    这样也能帮同学们找准位置」。
 
-def _draw_campus_boundary(d, proj, bounds, z) -> None:
-    """在底图上画**校园范围**的蓝色虚线。
-
-    ⚠ 与 `frame`（= 校园 + 周边 150 m 缓冲，也是整张图的外框）**不是一回事**：
-    这条线画的是**校园本身的边界**（`data/raw/campus_boundaries.json` 的 geojson），
-    让同学一眼看出"哪儿才算校园里"。
-
-    画两遍：先白色略粗打底、再蓝色 —— 这样压在深色屋顶或浅色地面上都看得清。
+    ⚠ 只画 `LABEL_LANDMARKS` 白名单里的（每校区 5~6 个）。用白名单而不是
+    `cfg.landmarks` 全量，是因为后者混着"天文与空间科学学院"这类**学术楼名** ——
+    同学看了没概念，标满反而是干扰（这正是当初放弃地标标注的原因）。
     """
-    geo = (bounds or {}).get("geojson")
-    if not geo:
-        return
+    names = LABEL_LANDMARKS.get(campus) or []
+    if not names:
+        return 0
     try:
-        rings = geo["coordinates"]
+        from campus_config import campus as _get_campus
+        lm = _get_campus(campus).landmarks
     except Exception:
-        return
-    dash, gap = BOUNDARY_DASH * z, BOUNDARY_GAP * z
-    for ring in rings:
-        pts = [proj.pt(lo, la) for lo, la in ring]
-        if len(pts) < 3:
+        return 0
+
+    f = vb._font(LABEL_FONT_PX)
+    n = 0
+    for item in names:
+        name, side = item if isinstance(item, (tuple, list)) else (item, "right")
+        ll = lm.get(name)
+        if not ll:
             continue
-        _dashed_polygon(d, pts, (255, 255, 255), BOUNDARY_WIDTH + 2, dash, gap)
-        _dashed_polygon(d, pts, BOUNDARY_COLOR, BOUNDARY_WIDTH, dash, gap)
+        # ⚠ `landmarks` 存的是 **(lat, lon)**，而 `proj.pt()` 要 (lon, lat) —— 别搞反
+        x, y = proj.pt(float(ll[1]), float(ll[0]))
+        r = 9
+        d.ellipse([x - r, y - r, x + r, y + r], fill=LABEL_DOT,
+                  outline=LABEL_STROKE, width=3)
+        # 文字按指定方向错开，避免相邻地标的标签叠在一起
+        pad, ymid = 16, -LABEL_FONT_PX * 0.62
+        if side == "left":
+            tx, ty, anc = x - pad, y + ymid, "ra"
+        elif side == "top":
+            tx, ty, anc = x, y - pad, "mb"
+        elif side == "bottom":
+            tx, ty, anc = x, y + pad, "mt"
+        else:
+            tx, ty, anc = x + pad, y + ymid, "la"
+        d.text((tx, ty), name, font=f, fill=LABEL_TEXT, anchor=anc,
+               stroke_width=4, stroke_fill=LABEL_STROKE)
+        n += 1
+    return n
 
 
 def _roof_furniture(ring, seed, ppm, exag: float):
@@ -724,8 +741,7 @@ def _render(campus, s, w, n, e, *, width, shadows):
     vb.draw_ground_layers(d, proj, vec, bounds, z)      # 地面：平面色块，不动
     img, d = _draw_scene(img, d, proj, blds, vec, ppm, z,
                          shadows=shadows, trees=True, campus=campus, skip=skip)
-    if DRAW_CAMPUS_BOUNDARY:                            # 校园范围蓝色虚线
-        _draw_campus_boundary(d, proj, bounds, z)
+    _draw_landmarks(d, proj, campus)                    # 几个标志物（帮同学定位）
 
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
@@ -787,8 +803,8 @@ def _style_tag() -> str:
     """
     raw = (f"{VIEW}|{LIGHT}|{SHADOW}|{SHADOW_ALPHA}|{SHADOW_BLUR}|{EXAG}|"
            f"{WALL_TOP}|{WALL_SIDE}|{ROOF}|{sorted(WALL_SIDE_BY_CAMPUS.items())}|"
-           f"{DRAW_CAMPUS_BOUNDARY}|{BOUNDARY_COLOR}|{BOUNDARY_WIDTH}|"
-           f"{BOUNDARY_DASH}|{BOUNDARY_GAP}|{SKIP_OUTSOUTH_H}|"
+           f"{SKIP_OUTSOUTH_H}|{LABEL_DOT}|{LABEL_TEXT}|{LABEL_FONT_PX}|"
+           f"{sorted(LABEL_LANDMARKS.items())}|"
            f"{_trees_fingerprint()}")
     return hashlib.md5(raw.encode("utf-8")).hexdigest()[:10]
 

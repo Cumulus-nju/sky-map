@@ -447,6 +447,20 @@ def write_best_image(stem: Path, png_bytes: bytes, quality: int = 84) -> tuple[P
     data = png_bytes if len(png_bytes) <= len(jpg) else jpg
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(data)
+
+    # ⚠ 写完必须**删掉另一种格式**的旧文件（连同它的 meta）。
+    #   为什么：`find_cached()` 是按 `.png` → `.jpg` 找**第一个存在的**，所以只要旧的另一种
+    #   格式还留着，它就会被优先读到 —— 而它的 `_style` 是旧的，于是
+    #   `cached_*_frame()` 每次都判定"缓存无效 → 重新渲染"，磁盘上还一直躺着**两张不同版本**
+    #   的图。2026-10-04 实际踩到：仙林加了标志物标注后 JPEG 变**更小**，新图写进 .jpg，
+    #   而带蓝色虚线的旧 .png 没被清掉 ⇒ 测试立刻报
+    #   "统一入口返回的不是磁盘那一张"，而且每次请求都在白渲染。
+    other = stem.with_suffix(".jpg" if p.suffix == ".png" else ".png")
+    for q in (other, other.with_suffix(other.suffix + ".json")):
+        try:
+            q.unlink(missing_ok=True)
+        except Exception:
+            pass
     return p, data
 
 

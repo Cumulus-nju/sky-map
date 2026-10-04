@@ -345,12 +345,23 @@ try:
     check("鼓楼: 吸附几何里的楼数 = 可见楼数（排除已同步）",
           len(_rf["b"]) <= _n_bld_visible,
           f"屋顶 {len(_rf['b'])} ≤ 可见楼 {_n_bld_visible}")
-    check("校园范围虚线已开启（蓝色）", _rb2.DRAW_CAMPUS_BOUNDARY is True
-          and _rb2.BOUNDARY_COLOR[2] > _rb2.BOUNDARY_COLOR[0],
-          f"color={_rb2.BOUNDARY_COLOR}")
-    # 苏州走 glb 路径，也要画同一条虚线（引用的是 relief 的常量与函数）
-    import glb_relief as _gr
-    check("苏州: glb 渲染也接了校园虚线", hasattr(_gr, "_render"))
+    # 标志物白名单：每个名字都必须**真的存在于** cfg.landmarks ——
+    # 写错名字会静默少标一个，看图时谁也不会发现（所以钉死它）。
+    from campus_config import CAMPUSES as _CS
+    _miss = []
+    for _k, _names in _rb2.LABEL_LANDMARKS.items():
+        for _it in _names:
+            _nm = _it[0] if isinstance(_it, (tuple, list)) else _it
+            if _nm not in (_CS[_k].landmarks if _k in _CS else {}):
+                _miss.append(f"{_k}/{_nm}")
+    _tot = sum(len(v) for v in _rb2.LABEL_LANDMARKS.values())
+    check("标志物名单里的名字都存在于 campus_config.landmarks", not _miss,
+          f"共 {_tot} 个；缺失={_miss}")
+    check("标志物每校区 4~8 个（宁少勿多，不要标满）",
+          all(4 <= len(v) <= 8 for v in _rb2.LABEL_LANDMARKS.values()),
+          str({k: len(v) for k, v in _rb2.LABEL_LANDMARKS.items()}))
+    check("蓝色虚线已移除（用户改主意，换成标志物）",
+          not hasattr(_rb2, "DRAW_CAMPUS_BOUNDARY"))
 except Exception as exc:
     check("校园虚线/排除规则", False, f"{type(exc).__name__}: {exc}")
 
