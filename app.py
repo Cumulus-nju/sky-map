@@ -236,7 +236,12 @@ def main() -> None:
     campus_key = st.radio(
         "校区", list(CAMPUSES), format_func=lambda k: key_labels[k], horizontal=True, key="campus_key"
     )
-    st.caption("在地图上**点一下**你拍照站的位置（越准越好，**必填**）；点错了再点一次即可覆盖。")
+    # ⚠ 操作说明必须写全：选点是**右键**，左键是拖动 ——
+    # 不写清楚，同学拿左键去点会变成拖地图、怎么都选不上。
+    st.caption(
+        "在地图上**点一下**你拍照站的位置（越准越好，**必填**）；点错了再点一次即可覆盖。"
+        "　操作：**滚轮 / 双指** 缩放 · **左键按住** 拖动 · **右键** 选点"
+    )
 
     state_key = f"picked_{campus_key}"
     picked = st.session_state.get(state_key)
@@ -258,16 +263,16 @@ def main() -> None:
             st.session_state[state_key] = newpt
             st.rerun()
 
-    left, right = st.columns([1, 1])
-    with left:
-        picked = st.session_state.get(state_key)
-        if picked:
-            st.success(f"已选机位：{picked[0]:.6f}, {picked[1]:.6f}")
-    with right:
-        loc_text = st.text_input(
-            "位置描述（可选，供人工校对）",
-            placeholder="例：北大楼前草坪、图书馆南侧台阶、操场看台…",
-        )
+    # 「位置描述」直接放在**地图正下方通栏**。
+    # ⚠ 原来是 `st.columns([1, 1])`：左边放"已选机位"、右边放这个输入框，
+    # 于是输入框只占右半边、看着"偏"（用户 2026-10-04 反馈"现在偏着很奇怪"）。
+    picked = st.session_state.get(state_key)
+    if picked:
+        st.success(f"已选机位：{picked[0]:.6f}, {picked[1]:.6f}")
+    loc_text = st.text_input(
+        "位置描述（可选，供人工校对）",
+        placeholder="例：北大楼前草坪、图书馆南侧台阶、操场看台…",
+    )
 
     # ---------------- 第二步：上传照片 ----------------
     st.subheader("② 上传作品")
