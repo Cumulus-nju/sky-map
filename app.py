@@ -115,6 +115,32 @@ def save_photo(upload) -> tuple[str, str]:
     return origin_ref, thumb_ref
 
 
+def roof_shapes_for(campus_key: str, fs, fw, fn, fe):
+    """取该校区立体底图的**屋顶多边形**（点选吸附用）；取不到就返回 None。
+
+    只有**自绘立体底图**才有"屋顶相对楼基位移"这回事：瓦片拼图是正射影像、
+    旧平面自绘没有高度 —— 都不需要吸附。
+
+    ⚠ 必须容错：吸附是锦上添花，**绝不能因为它把投稿页搞挂**
+    （老坑：兜底路径平时跑不到，所以最容易写错；这里一出错就退回"不吸附"）。
+    """
+    import sys
+
+    import static_basemap
+    try:
+        src = static_basemap.source_of(campus_key)
+        if src == "relief":
+            import relief_basemap
+            return relief_basemap.roof_shapes(campus_key, fs, fw, fn, fe, width=2000)
+        if src == "glb":
+            import glb_relief
+            return glb_relief.roof_shapes(campus_key, fs, fw, fn, fe, width=2000)
+    except Exception as exc:
+        print(f"[pick] 屋顶吸附几何不可用（{type(exc).__name__}: {exc}），本次不吸附",
+              file=sys.stderr)
+    return None
+
+
 def render_picker(campus_key: str, picked: tuple[float, float] | None):
     """渲染选点组件：**外框内的静态底图** + 点击取坐标。
 
@@ -155,6 +181,8 @@ def render_picker(campus_key: str, picked: tuple[float, float] | None):
         landmarks=None,
         max_display_height=980,
         tip="滚轮缩放 · 左键按住拖动 · 右键选点",
+        # 立体底图上"点到屋顶"会偏出真实楼基 ⇒ 贴回那栋楼的足迹（用户 2026-10-04 要的）
+        roofs=roof_shapes_for(campus_key, fs, fw, fn, fe),
     )
     # width 用 "stretch" 铺满可用宽度：组件内部会自己量父容器宽度并调整
     # #frame 与 iframe 高度（Streamlit 只收整数宽度，写死会在窄屏被裁）。

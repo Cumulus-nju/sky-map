@@ -79,6 +79,38 @@ def _js_formula(x: float, y: float, fi) -> tuple[float, float]:
     return lat, lon
 
 
+def point_in_poly(x: float, y: float, flat) -> bool:
+    """射线法（`flat` = [x0,y0,x1,y1,...]）。**必须与 JS `inPoly` 等价**。"""
+    inside = False
+    n = len(flat) // 2
+    j = n - 1
+    for i in range(n):
+        xi, yi = flat[2 * i], flat[2 * i + 1]
+        xj, yj = flat[2 * j], flat[2 * j + 1]
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+
+def snap_to_footprint(x: float, y: float, roofs: dict | None) -> tuple[float, float]:
+    """`snapToFootprint` 的 Python 版（两边必须一致，测试会比对）。
+
+    立体底图上"屋顶"相对真实楼基有位移（= 建筑高度）。点到屋顶时反向平移
+    `VIEW × dz` 就回到楼基 —— 因为轴测是平行投影，这个关系是严格的。
+
+    `roofs["b"]` 是**远→近**排列（与底图绘制顺序一致），所以**倒着**遍历：
+    第一个命中的就是视觉上真正压在最上面的那栋（否则被前排楼挡住的屋顶会被误吸附）。
+    """
+    if not roofs or not roofs.get("b"):
+        return (x, y)
+    vx, vy = roofs["v"]
+    for dz, poly in reversed(roofs["b"]):
+        if point_in_poly(x, y, poly):
+            return (x - vx * dz, y - vy * dz)
+    return (x, y)
+
+
 def _lat_lerp(lat_a: float, lat_b: float, t: float) -> float:
     """按 Mercator 的 y 线性插值（纬度不能直接线性插）。"""
     return _inv_merc_y(_merc_y(lat_a) + (_merc_y(lat_b) - _merc_y(lat_a)) * t)
@@ -104,11 +136,22 @@ def build_picker_html(
     landmarks: dict[str, tuple[float, float]] | None = None,
     max_display_height: float = 980.0,
     tip: str = "滚轮缩放 · 左键按住拖动 · 右键选点",
+    roofs: dict | None = None,
 ) -> tuple[str, float]:
     """生成点选组件的 HTML，返回 (html, 建议组件高度)。
 
     `nav` = (lat, lon, zoom) 是上次的视图状态；给了就恢复，没给就以 `picked`
     或外框中心为中心、z=0。
+
+    `roofs`（可选）= 立体底图的**建筑屋顶多边形**（`relief_basemap.roof_shapes()`
+    或 `glb_relief.roof_shapes()` 的返回值）。给了就启用**点选吸附**：
+
+        立体底图上"屋顶"相对真实楼基有个位移（位移 = 建筑高度），同学点到屋顶时
+        落点会偏出那栋楼。但"点屋顶"这个动作本身就说明**拍摄者在楼里/楼上**，
+        所以应该贴回**那栋楼的足迹**（用户 2026-10-04 拍板要的）。
+
+    轴测是平行投影 ⇒ 吸附 = 反向平移 `p - VIEW×dz`，不需要投影反解。
+    瓦片 / 平面底图没有这个位移，传 None 即可（行为与以前一模一样）。
     """
     ratio = frame_ratio(fi)
     base_w = min(MAX_W, max(MIN_W, display_width))
@@ -144,6 +187,7 @@ def build_picker_html(
         "marks": marks, "pick": pick_px, "campus": campus_key,
         "initLat": n_lat, "initLon": n_lon, "initZoom": n_z,
         "maxZoom": MAX_ZOOM, "minW": MIN_W, "maxW": MAX_W, "maxH": max_display_height,
+        "roofs": roofs or None,
     }
     # 防止 JSON 里的 </script> 提前闭合脚本块
     data_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
@@ -214,6 +258,32 @@ function imgPxToLatLng(x, y) {{
   const lon = D.nwLon + (D.seLon - D.nwLon) * (x / D.iw);
   const ya = mercY(D.nwLat), yb = mercY(D.seLat);
   return [invMercY(ya + (yb - ya) * (y / D.ih)), lon];
+}}
+
+// ---------------- 点选吸附（仅立体底图）----------------
+// 轴测是**平行投影**：屋顶 = 足迹 + VIEW × 楼高。
+// 所以"点在屋顶上"时把落点**反向平移**就回到了真实楼基 —— 不需要投影反解，
+// 也不依赖任何相机参数。几何由 relief_basemap.roof_shapes() 导出（与实际底图同源）。
+function inPoly(x, y, p) {{
+  let inside = false;
+  for (let i = 0, j = p.length - 2; i < p.length; j = i, i += 2) {{
+    const xi = p[i], yi = p[i + 1], xj = p[j], yj = p[j + 1];
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi))
+      inside = !inside;
+  }}
+  return inside;
+}}
+function snapToFootprint(x, y) {{
+  const R = D.roofs;
+  if (!R || !R.b || !R.b.length) return [x, y];
+  // `R.b` 是**远 -> 近**排列（与底图绘制顺序一致）。倒着找：第一个命中的就是
+  // **最靠近观众的那栋**，也就是视觉上真正压在上面的那栋 —— 否则被前排楼挡住的
+  // 屋顶也会被误吸附（用户看到的明明是前排那栋）。
+  for (let i = R.b.length - 1; i >= 0; i--) {{
+    const dz = R.b[i][0];
+    if (inPoly(x, y, R.b[i][1])) return [x - R.v[0] * dz, y - R.v[1] * dz];
+  }}
+  return [x, y];
 }}
 
 // ---------------- 视图 ----------------
@@ -351,12 +421,26 @@ frame.addEventListener('pointercancel', function () {{
 // 右键选点（必须屏蔽浏览器右键菜单，否则弹菜单把操作打断）
 frame.addEventListener('contextmenu', function (ev) {{
   ev.preventDefault();
-  const p = screenToImg(ev.clientX, ev.clientY);
+  const raw = screenToImg(ev.clientX, ev.clientY);
+  const p = snapToFootprint(raw[0], raw[1]);      // 点到屋顶 -> 贴回楼基
   pin.dataset.ix = p[0]; pin.dataset.iy = p[1]; pin.classList.add('on');
   const ll = imgPxToLatLng(p[0], p[1]);
   render();
+  flashSnap(raw, p);
   report(true, ll[0], ll[1]);
 }});
+
+// 吸附发生时给一句提示 —— 否则同学会奇怪"我点的位置怎么自己变了"
+let snapTimer = null;
+function flashSnap(raw, p) {{
+  const hint = document.getElementById('hint');
+  if (!hint) return;
+  if (hint.dataset.tip === undefined) hint.dataset.tip = hint.textContent;
+  const moved = Math.hypot(p[0] - raw[0], p[1] - raw[1]) > 0.5;
+  hint.textContent = moved ? '已吸附到楼基（你点的是楼顶）' : hint.dataset.tip;
+  if (snapTimer) clearTimeout(snapTimer);
+  snapTimer = setTimeout(function () {{ hint.textContent = hint.dataset.tip; }}, 2600);
+}}
 
 zin.addEventListener('click', function () {{ zoom = Math.min(D.maxZoom, zoom + 1); render(); report(false); }});
 zout.addEventListener('click', function () {{ zoom = Math.max(0, zoom - 1); render(); report(false); }});

@@ -266,6 +266,66 @@ try:
 except Exception as exc:
     check("预生成底图检查", False, f"{type(exc).__name__}: {exc}")
 
+# ---------------------------------------------------------------------------
+print("\n[9] 立体底图点选吸附：点屋顶 → 贴回楼基")
+print("     —— 立体底图上屋顶相对楼基位移 = 楼高；点到屋顶说明人在楼里/楼上，要贴回去")
+try:
+    import relief_basemap as _rb
+
+    _s, _w, _n, _e = frame_of("gulou")
+    _roofs = _rb.roof_shapes("gulou", _s, _w, _n, _e, width=2000)
+    check("鼓楼: 导出了屋顶多边形", len(_roofs["b"]) > 100, f"{len(_roofs['b'])} 个")
+    check("鼓楼: 位移方向与 VIEW 一致",
+          near(_roofs["v"][0], _rb.VIEW[0], 1e-9)
+          and near(_roofs["v"][1], _rb.VIEW[1], 1e-9), f"v={_roofs['v']}")
+
+    # 屋顶内部的点 → 吸附结果必须恰好是"反向平移"
+    # ⚠ 不可以用"顶点平均"当内部点：凹多边形（U 形宿舍楼）的平均点可能落在外面，
+    #   那样测的就不是吸附而是射线法的边界行为（第一版自检就踩过这个）。
+    # 屋顶内部的点 → 吸附后必须落在**某栋楼的足迹内**（语义：贴回楼里）。
+    # ⚠ 不能断言"等于当前遍历这栋的平移"：屋顶多边形会互相重叠（前排楼压住后排楼），
+    #   而 `snap_to_footprint` 是**有意**取"最靠近观众的那栋"（视觉上真正压在上面的），
+    #   那时落点属于另一栋的足迹 —— 那是对的。
+    #   （第一版断言就是按"当前这栋"写的，于是误报了一次失败。）
+    feet_flat = []
+    for dz, flat in _roofs["b"]:
+        fp = []
+        for i in range(len(flat) // 2):
+            fp.append(flat[2 * i] - _rb.VIEW[0] * dz)
+            fp.append(flat[2 * i + 1] - _rb.VIEW[1] * dz)
+        feet_flat.append(fp)
+    wp = 0
+    landed = 0
+    for dz, flat in _roofs["b"]:
+        m = len(flat) // 2
+        cx = sum(flat[2 * i] for i in range(m)) / m
+        cy = sum(flat[2 * i + 1] for i in range(m)) / m
+        if not frame_picker.point_in_poly(cx, cy, flat):
+            continue                      # 顶点平均落在凹多边形外，不是"可点到的位置"
+        wp += 1
+        gx, gy = frame_picker.snap_to_footprint(cx, cy, _roofs)
+        if any(frame_picker.point_in_poly(gx, gy, fp) for fp in feet_flat):
+            landed += 1
+    check("鼓楼: 屋顶内点吸附后都落在某栋楼的足迹内", wp > 0 and landed == wp,
+          f"{landed}/{wp} 栋")
+
+    _far = (-9999.0, -9999.0)
+    check("鼓楼: 屋顶外的点原样返回（不能乱吸）",
+          frame_picker.snap_to_footprint(_far[0], _far[1], _roofs) == _far)
+    check("无 roofs 时不吸附（瓦片/平面底图旧行为不变）",
+          frame_picker.snap_to_footprint(123.4, 567.8, None) == (123.4, 567.8))
+
+    _fi = sb.frame_image_for("gulou", _s, _w, _n, _e, target_width=2000, prefer="relief")
+    _doc, _h = frame_picker.build_picker_html(_fi, campus_key="gulou",
+                                              display_width=880, roofs=_roofs)
+    check("HTML 注入了 roofs 几何", '"roofs":' in _doc and '"v":' in _doc)
+    check("HTML 含吸附实现 snapToFootprint", "function snapToFootprint" in _doc)
+    check("HTML 含射线法 inPoly", "function inPoly" in _doc)
+    _doc2, _h2 = frame_picker.build_picker_html(_fi, campus_key="gulou", display_width=880)
+    check("不传 roofs 时 payload 为 null", '"roofs": null' in _doc2)
+except Exception as exc:
+    check("屋顶吸附", False, f"{type(exc).__name__}: {exc}")
+
 print("\n" + "=" * 66)
 # 清理测试自己生成的中间产物。
 #

@@ -264,6 +264,83 @@ def _px_per_m(proj, lat):
     return abs(x1 - x0) / (0.001 * m_per_deg)
 
 
+def roof_shapes(campus: str, s, w, n, e, *, width: int = 2000) -> dict:
+    """苏州的**屋顶多边形**（原图像素），供 `frame_picker` 做"点屋顶 → 贴回足迹"。
+
+    ⚠ 苏州和前两个校区**机制不同**，别照抄 `relief_basemap.roof_shapes`：
+    这里的楼是 GLB 模型的三角面**真三维渲染**，不是"足迹挤出"。但吸附只需要
+    "屋顶在图上哪儿"，而：
+
+      · 轴测是**平行投影** ⇒ 平屋顶 = 底面 + VIEW_H × 高度像素（严格成立）；
+      · 总平面 `suzhou_plan_buildings.geojson` 有 **935 个真实足迹 + 真实 height**
+        （例：r0001 是 29.88 m / 9 层），文档记的配准结果也确认它与模型"逐米吻合"。
+
+    所以用"足迹 + height"重建屋顶是可靠的（**坡屋顶会略有偏差**，可接受 ——
+    吸附本来就是"贴回楼里"的近似，不是测量）。
+
+    坐标约定（**查证过，别改**）：总平面 ring 的点是**局部米制 (东, 北)**，
+    直接 `geo.to_lonlat(X, Y)` —— 与 `_draw_shadows()` 里的用法一致。
+    """
+    import json
+
+    import static_basemap as sb
+    import suzhou_georef
+    import vector_basemap as vb
+
+    geo = suzhou_georef.Geo(suzhou_georef.load(GEOREF))
+
+    ZOOM = 16
+    ox = round(sb._lon_to_px(w, ZOOM))
+    oy = round(sb._lat_to_px(n, ZOOM))
+    span_x = max(1, round(sb._lon_to_px(e, ZOOM)) - ox)
+    span_y = max(1, round(sb._lat_to_px(s, ZOOM)) - oy)
+    W = int(width)
+    scale_x = W / span_x
+    H = max(1, int(round(span_y * scale_x)))
+    lat_n = sb._px_to_lat(oy, ZOOM)
+    lat_s = sb._px_to_lat(oy + span_y, ZOOM)
+    lon_w = sb._px_to_lon(ox, ZOOM)
+    lon_e = sb._px_to_lon(ox + span_x, ZOOM)
+    proj = vb.Projector(lat_s, lon_w, lat_n, lon_e, W, H)
+    ppm = _px_per_m(proj, (lat_n + lat_s) / 2.0)
+
+    try:
+        plan = json.loads((RAW / "suzhou_plan_buildings.geojson")
+                          .read_text(encoding="utf-8"))["features"]
+    except Exception:
+        return {"v": list(VIEW_H), "b": []}
+
+    items = []
+    for f in plan:
+        props = f.get("properties") or {}
+        try:
+            hm = float(props.get("height") or 0.0)
+        except Exception:
+            hm = 0.0
+        if hm <= 0.2:
+            continue
+        dz = hm * ppm * EXAG
+        if dz < 1.0:
+            continue
+        for ring in f["geometry"]["coordinates"]:
+            pts = []
+            for X, Y in ring:
+                lon, lat = geo.to_lonlat(X, Y)
+                pts.append(proj.pt(float(lon), float(lat)))
+            if len(pts) >= 3:
+                items.append((max(p[1] for p in pts), dz, pts))
+    items.sort(key=lambda t: t[0])          # 远（北）→ 近（南），与绘制同向
+
+    out = []
+    for _, dz, pts in items:
+        flat = []
+        for x, y in pts:
+            flat.append(round(x + VIEW_H[0] * dz, 1))
+            flat.append(round(y + VIEW_H[1] * dz, 1))
+        out.append([round(dz, 1), flat])
+    return {"v": [VIEW_H[0], VIEW_H[1]], "b": out}
+
+
 def _sort_key(V, F):
     """画家算法排序键：横跨整个图层的三角面用平均 y（图像坐标，小 = 北 = 远）。"""
     return V[F][:, :, 1].mean(axis=1)

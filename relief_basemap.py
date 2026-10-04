@@ -261,6 +261,50 @@ def roof_offset_px(height_m: float, px_per_m: float) -> tuple[float, float]:
     return (VIEW[0] * dz, VIEW[1] * dz)
 
 
+def roof_shapes(campus: str, s, w, n, e, *, width: int = 2000) -> dict:
+    """导出**每栋楼的屋顶多边形**（原图像素），供 `frame_picker` 做点选吸附。
+
+    为什么要吸附（用户 2026-10-04 拍板）：
+        "点到楼顶其实说明是在楼里面拍的，自然要吸附回去。"
+        立体底图下屋顶相对足迹有个位移，同学点到屋顶时落点会**偏出真实楼基**
+        （偏移量 = 建筑高度）。但"点屋顶"这个动作本身就说明拍摄者在楼里/楼上，
+        所以要贴回**那栋楼的足迹**。
+
+    几何（轴测 = 平行投影，见模块 docstring）：
+        屋顶 = 足迹 + VIEW × 高度像素
+    ⇒ 吸附就是**反向平移** `p - VIEW×dz`，不需要投影反解，也不依赖任何相机参数。
+
+    返回：
+        {"v": [vx, vy], "b": [[dz, [x0,y0,x1,y1,...]], ...]}
+        `b` **按绘制顺序（远 → 近）**排列：前端命中多栋时取**最后一个**命中的，
+        这样"被前排楼挡住的屋顶"不会被误吸附（视觉上看到的确实是前排那栋）。
+    """
+    P = _project(s, w, n, e, width)
+    proj, ppm = P["proj"], P["ppm"]
+    blds = _load_json(RAW / f"{campus}_buildings.geojson")
+
+    items = []
+    for idx, feat in enumerate(blds.get("features", [])):
+        props = feat.get("properties") or {}
+        dz = _height_m(props, idx) * ppm * EXAG
+        if dz < 1.0:
+            continue          # 位移不到 1 px，吸不吸附一个样，不必白传几何
+        for ring in _rings_of(feat.get("geometry") or {}):
+            pts = [proj.pt(lo, la) for lo, la in ring]
+            if len(pts) >= 3:
+                items.append((max(p[1] for p in pts), dz, pts))
+    items.sort(key=lambda t: t[0])        # 与 `_draw_scene` 同一套远近顺序
+
+    out = []
+    for _, dz, pts in items:
+        flat = []
+        for x, y in pts:
+            flat.append(round(x + VIEW[0] * dz, 1))
+            flat.append(round(y + VIEW[1] * dz, 1))
+        out.append([round(dz, 1), flat])
+    return {"v": [VIEW[0], VIEW[1]], "b": out}
+
+
 def _hash01(*nums) -> float:
     """确定性的 [0,1) 伪随机（同样的输入永远给同样的结果，渲染才可复现/可缓存）。"""
     h = hashlib.md5(("|".join(f"{n:.3f}" for n in nums)).encode("utf-8")).digest()
@@ -519,18 +563,15 @@ def render_frame_image(campus: str, s: float, w: float, n: float, e: float, *,
         EXAG = old_exag
 
 
-def _render(campus, s, w, n, e, *, width, shadows):
+def _project(s, w, n, e, width):
+    """外框 + 目标宽度 → 投影与换算参数。
+
+    ⚠ **`_render()` 与 `roof_shapes()` 必须共用这一份**：吸附用的几何要和
+    实际画出来的那张图**严格同源**，否则"差一点点"在点选上看不出来、但会一直错。
+    取整与换算口径与 `vector_basemap` / `static_basemap` 完全一致。
+    """
     import static_basemap as sb
-    from PIL import Image, ImageDraw
 
-    vec = _load_json(RAW / f"vector_{campus}.geojson")
-    blds = _load_json(RAW / f"{campus}_buildings.geojson")
-    try:
-        bounds = _load_json(RAW / "campus_boundaries.json").get(campus, {})
-    except Exception:
-        bounds = {}
-
-    # 与 vector_basemap / static_basemap 完全一样的取整与换算口径
     ox = round(sb._lon_to_px(w, ZOOM))
     oy = round(sb._lat_to_px(n, ZOOM))
     span_x = max(1, round(sb._lon_to_px(e, ZOOM)) - ox)
@@ -544,19 +585,37 @@ def _render(campus, s, w, n, e, *, width, shadows):
     lon_w = sb._px_to_lon(ox, ZOOM)
     lon_e = sb._px_to_lon(ox + span_x, ZOOM)
     proj = Projector(lat_s, lon_w, lat_n, lon_e, W, H)
-    z = W / 1400.0
+    ppm_x, ppm_y = _px_per_m(proj, (lat_n + lat_s) / 2.0)
+    return {"proj": proj, "z": W / 1400.0, "W": W, "H": H,
+            "ppm": (ppm_x + ppm_y) / 2.0,
+            "ox": ox, "oy": oy, "scale_x": scale_x, "scale_y": scale_y}
+
+
+def _render(campus, s, w, n, e, *, width, shadows):
+    import static_basemap as sb
+    from PIL import Image, ImageDraw
+
+    vec = _load_json(RAW / f"vector_{campus}.geojson")
+    blds = _load_json(RAW / f"{campus}_buildings.geojson")
+    try:
+        bounds = _load_json(RAW / "campus_boundaries.json").get(campus, {})
+    except Exception:
+        bounds = {}
+
+    P = _project(s, w, n, e, width)
+    proj, z, W, H, ppm = P["proj"], P["z"], P["W"], P["H"], P["ppm"]
 
     img = Image.new("RGB", (W, H), C["bg"])
     d = ImageDraw.Draw(img, "RGBA")
     vb.draw_ground_layers(d, proj, vec, bounds, z)      # 地面：平面色块，不动
-    ppm_x, ppm_y = _px_per_m(proj, (lat_n + lat_s) / 2.0)
-    img, d = _draw_scene(img, d, proj, blds, vec, (ppm_x + ppm_y) / 2.0, z,
+    img, d = _draw_scene(img, d, proj, blds, vec, ppm, z,
                          shadows=shadows, trees=True, campus=campus)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
     return sb.FrameImage(png=buf.getvalue(), width=W, height=H, zoom=ZOOM,
-                         scale_x=scale_x, scale_y=scale_y, origin_x=ox, origin_y=oy,
+                         scale_x=P["scale_x"], scale_y=P["scale_y"],
+                         origin_x=P["ox"], origin_y=P["oy"],
                          south=s, west=w, north=n, east=e)
 
 
