@@ -125,9 +125,10 @@ const info = await evaluate(`(() => {
   };
 })()`);
 
-// ⚠ captureBeyondViewport：侧边栏底部的「构建版本」在视口外，不整页截就看不到。
-const { result: shot } = await send("Page.captureScreenshot",
-  { format: "png", captureBeyondViewport: true }, sid);
+// ⚠ **不要用 `captureBeyondViewport`**：在 headless=new 下它会挂住不返回
+//   （2026-10-04 实测连续两次卡死到超时）。改用**高窗口**
+//   （启动参数 `--window-size=1500,2400`）就能拿到侧边栏底部的「构建版本」。
+const { result: shot } = await send("Page.captureScreenshot", { format: "png" }, sid);
 if (shot?.data) writeFileSync(outPng, Buffer.from(shot.data, "base64"));
 
 console.log(JSON.stringify({
