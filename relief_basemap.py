@@ -157,10 +157,20 @@ LABEL_LANDMARKS: dict[str, list[tuple[str, str]]] = {
     "suzhou": [("图书馆", "right"), ("北大楼", "top"), ("环形食堂", "right"),
                ("苏式园林", "right"), ("庄里山", "left"), ("运动场（西区）", "right")],
 }
+# 图上显示的**短名**：`landmarks` 里的全名太长会吃掉半张图
+# （"南京大学图书馆（鼓楼）"在页面尺寸下能占掉 40% 的宽度），而地图上只要有"图书馆"就够认。
+LABEL_ALIAS: dict[str, str] = {
+    "南京大学图书馆（鼓楼）": "图书馆",
+    "仙林校区第二体育场": "第二体育场",
+    "运动场（西区）": "运动场",
+}
 LABEL_DOT = (206, 78, 40)           # 圆点（橙红，与地图图例同色系）
 LABEL_TEXT = (34, 34, 40)           # 文字颜色
 LABEL_STROKE = (255, 255, 255)      # 白描边：压在深色屋顶/绿树上也读得出
-LABEL_FONT_PX = 42                  # 字号（底图宽 2000 时的像素）
+# 字号（底图宽 2000 时的像素）。⚠ 别按"底图 1:1"来定：底图在页面里会被缩小到
+# ≈940 px（缩放 ≈0.47），42 px 的字最后只剩 ~12 px，**线上根本读不出来**
+# （第一版就是 42，截图放大一看全是糊的）。64 px ⇒ 线上约 30 px，手机上也还能认。
+LABEL_FONT_PX = 64
 
 
 def _tint_of(props: dict) -> tuple[int, int, int]:
@@ -263,11 +273,11 @@ def _draw_landmarks(d, proj, campus) -> int:
             continue
         # ⚠ `landmarks` 存的是 **(lat, lon)**，而 `proj.pt()` 要 (lon, lat) —— 别搞反
         x, y = proj.pt(float(ll[1]), float(ll[0]))
-        r = 9
+        r = 13
         d.ellipse([x - r, y - r, x + r, y + r], fill=LABEL_DOT,
-                  outline=LABEL_STROKE, width=3)
+                  outline=LABEL_STROKE, width=4)
         # 文字按指定方向错开，避免相邻地标的标签叠在一起
-        pad, ymid = 16, -LABEL_FONT_PX * 0.62
+        pad, ymid = 22, -LABEL_FONT_PX * 0.60
         if side == "left":
             tx, ty, anc = x - pad, y + ymid, "ra"
         elif side == "top":
@@ -276,8 +286,8 @@ def _draw_landmarks(d, proj, campus) -> int:
             tx, ty, anc = x, y + pad, "mt"
         else:
             tx, ty, anc = x + pad, y + ymid, "la"
-        d.text((tx, ty), name, font=f, fill=LABEL_TEXT, anchor=anc,
-               stroke_width=4, stroke_fill=LABEL_STROKE)
+        d.text((tx, ty), LABEL_ALIAS.get(name, name), font=f, fill=LABEL_TEXT,
+               anchor=anc, stroke_width=4, stroke_fill=LABEL_STROKE)
         n += 1
     return n
 
@@ -804,7 +814,7 @@ def _style_tag() -> str:
     raw = (f"{VIEW}|{LIGHT}|{SHADOW}|{SHADOW_ALPHA}|{SHADOW_BLUR}|{EXAG}|"
            f"{WALL_TOP}|{WALL_SIDE}|{ROOF}|{sorted(WALL_SIDE_BY_CAMPUS.items())}|"
            f"{SKIP_OUTSOUTH_H}|{LABEL_DOT}|{LABEL_TEXT}|{LABEL_FONT_PX}|"
-           f"{sorted(LABEL_LANDMARKS.items())}|"
+           f"{sorted(LABEL_LANDMARKS.items())}|{sorted(LABEL_ALIAS.items())}|"
            f"{_trees_fingerprint()}")
     return hashlib.md5(raw.encode("utf-8")).hexdigest()[:10]
 

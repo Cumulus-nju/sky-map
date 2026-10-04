@@ -589,7 +589,7 @@ def _style_tag():
     try:
         import relief_basemap as _rb
         btag = (f"{_rb.LABEL_DOT}|{_rb.LABEL_TEXT}|{_rb.LABEL_FONT_PX}"
-                f"|{sorted(_rb.LABEL_LANDMARKS.items())}")
+                f"|{sorted(_rb.LABEL_LANDMARKS.items())}|{sorted(_rb.LABEL_ALIAS.items())}")
     except Exception:
         btag = "none"
     raw = (f"{VIEW_H}|{LIGHT_H.tolist()}|{WALL_MIN}|{WALL_MAX}|{ROOF_F}|{EXAG}"

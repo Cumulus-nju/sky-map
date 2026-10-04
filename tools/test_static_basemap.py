@@ -362,6 +362,10 @@ try:
           str({k: len(v) for k, v in _rb2.LABEL_LANDMARKS.items()}))
     check("蓝色虚线已移除（用户改主意，换成标志物）",
           not hasattr(_rb2, "DRAW_CAMPUS_BOUNDARY"))
+    _alias_bad = [k for k in _rb2.LABEL_ALIAS
+                  if not any(k in c.landmarks for c in _CS.values())]
+    check("短名映射的 key 都真实存在于某个校区的 landmarks", not _alias_bad,
+          f"{len(_rb2.LABEL_ALIAS)} 条；无效={_alias_bad}")
 except Exception as exc:
     check("校园虚线/排除规则", False, f"{type(exc).__name__}: {exc}")
 
