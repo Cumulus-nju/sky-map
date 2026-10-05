@@ -148,6 +148,23 @@ def _strip_name(name: str) -> str:
 # ---------------------------------------------------------------- 打包数据
 
 
+def _relief_dataurl(campus_key: str) -> str:
+    """自绘立体底图的 data URL —— **与投稿页"选机位"那张完全同源**。
+
+    为什么要让成品地图也用这一张（用户 2026-10-05 提的）：
+    投稿页选机位时看到的是 2.5D 立体底图，而这张成品地图过去是 OSM 街道 /
+    高德卫星 —— 同一栋楼在两边长得完全不一样，同学会怀疑"我点的那里到底对不对"。
+    换成同一张图，两块屏幕一眼就能对上。
+
+    ⚠ `target_width=2000` 是**故意**的：这个宽度已经预生成并随仓库提交
+    （`data/frame_images/*_w2000.*`，由 `tools/test_static_basemap.py` 第 8 节守着）。
+    换个宽度，云端容器会**现场重绘** —— 慢，还可能被瓦片源限流（2026-10-01 的教训）。
+    """
+    from static_basemap import frame_image_for
+
+    return frame_image_for(campus_key, *frame_of(campus_key), target_width=2000).data_url()
+
+
 def build_payload(subs: list[Submission], *, embed_photos: bool,
                   thumbs_dir: Path | None = None) -> dict:
     """构建地图数据。
@@ -226,6 +243,15 @@ def build_payload(subs: list[Submission], *, embed_photos: bool,
             "gcj02": src.gcj02, "subdomains": list(src.subdomains), "maxZoom": src.max_zoom,
         }
 
+    # 立体底图：逐校区取，缺一个就只让那个校区退回在线瓦片，**整张地图不能因此挂掉**
+    relief: dict[str, str | None] = {}
+    for k in CAMPUSES:
+        try:
+            relief[k] = _relief_dataurl(k)
+        except Exception as exc:   # noqa: BLE001 —— 底图是"锦上添花"，绝不能拖垮成品页
+            print(f"  ⚠ {k} 的立体底图不可用（{type(exc).__name__}: {exc}），该校区退回在线瓦片")
+            relief[k] = None
+
     return {
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "campuses": {
@@ -236,6 +262,8 @@ def build_payload(subs: list[Submission], *, embed_photos: bool,
                 "frame": list(frame_of(k)),
                 "frameSize": list(frame_size_m(k)),
                 "streets": tile_cfg(c.streets), "imagery": tile_cfg(c.imagery),
+                # 自绘立体底图（data URL）：直接按 frame 四角贴上去就是严丝合缝的
+                "relief": relief.get(k),
                 # 高德图层需要的 GCJ-02 纠偏量（米），EPSG:3857 平面
                 "offsets": {
                     "street": list(gcj_offset_meters(*c.center)) if c.streets.gcj02 else [0.0, 0.0],
@@ -364,6 +392,10 @@ body.embed #campusFloat{display:flex}
 /* ---------- 地图 ---------- */
 #main{flex:1;position:relative}
 #map{position:absolute;inset:0;background:#0d1520}
+/* 自绘立体底图只覆盖**外框**，框外没有瓦片可铺 —— 容器本色（深蓝）会露出来成黑边。
+   所以切到立体底图时把底色换成和投稿页组件一样的浅灰（#e9ecef）：
+   框外看起来就是一圈"留白"，和选机位那页的观感一致。 */
+#map.relief{background:#e9ecef}
 .leaflet-popup-content-wrapper{border-radius:12px;padding:0;overflow:hidden;box-shadow:0 8px 30px rgba(10,20,40,.28)}
 .leaflet-popup-content{margin:0;width:268px}
 .pop img{width:100%;display:block;background:#e5eaf0;max-height:230px;object-fit:cover}
@@ -453,6 +485,7 @@ body.embed #campusFloat{display:flex}
     <div id="campusFloat"></div>
     <button id="toggleSide">☰ 列表</button>
     <div id="topbar">
+      <button id="btnRelief">🏞 立体底图</button>
       <button id="btnStreet">🗺 OSM 街道</button>
       <button id="btnSat">🛰 高德卫星</button>
       <button id="btnVector">⛰ 矢量底图</button>
@@ -474,8 +507,8 @@ const DATA = __PAYLOAD__;
 const OFFLINE = __OFFLINE__;
 let map, vectorLayer = null, currentCampus = 'all';
 let selSpots = [], markerBySid = {}, tileFails = 0, fellBack = false;
-let baseLayer = 'none';           // none | street | image | vector
-let tileStreet = null, tileImage = null;
+let baseLayer = 'none';           // none | relief | street | image | vector
+let tileStreet = null, tileImage = null, reliefLayers = [];
 
 const el = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -576,18 +609,56 @@ function gcjTileLayer(src, offset){
 function onTileError(){
   if(fellBack) return;
   tileFails++;
-  if(tileFails >= 3){ fellBack = true; setBase('vector'); toast('在线瓦片加载失败，已自动切换为矢量底图'); }
+  // 瓦片加载不动时退到**自绘立体底图**（图片是内嵌的，不依赖网络），
+  // 比退到矢量底图更贴近投稿页的观感。
+  if(tileFails >= 3){
+    fellBack = true;
+    if(hasRelief()) { setBase('relief'); toast('在线瓦片加载失败，已自动切换为自绘立体底图'); }
+    else { setBase('vector'); toast('在线瓦片加载失败，已自动切换为矢量底图'); }
+  }
+}
+
+function hasRelief(ck){
+  const keys = (!ck || ck === 'all') ? Object.keys(DATA.campuses) : [ck];
+  return keys.some(k => DATA.campuses[k] && DATA.campuses[k].relief);
 }
 
 function dropTiles(){
   if(tileStreet && map.hasLayer(tileStreet)) map.removeLayer(tileStreet);
   if(tileImage && map.hasLayer(tileImage)) map.removeLayer(tileImage);
+  reliefLayers.forEach(l => { try { if(map.hasLayer(l)) map.removeLayer(l); } catch(e){} });
+  reliefLayers = [];
+  const m = document.getElementById('map');
+  if(m) m.classList.remove('relief');
   tileStreet = tileImage = null;
+}
+
+/* 自绘立体底图：把投稿页"选机位"用的**同一张图**按外框四角贴上去。
+   为什么贴图而不是重画一份：重画一定会与投稿页漂移，而这套"像素↔经纬度"
+   口径已经被 test_static_basemap 钉死了（图片四角 == 外框四角，容差 2e-3°）。
+   又因为图片本身就是 Web Mercator 投影下裁出来的、四角对的就是 frame，
+   所以这里**不需要任何 GCJ-02 纠偏**（和矢量底图一样是 WGS84 原样）。*/
+function addReliefLayers(){
+  const m = document.getElementById('map');
+  if(m) m.classList.add('relief');
+  const keys = currentCampus === 'all' ? Object.keys(DATA.campuses) : [currentCampus];
+  keys.forEach(ck => {
+    const cfg = DATA.campuses[ck];
+    if(!cfg || !cfg.relief || !cfg.frame || cfg.frame.length !== 4) return;
+    const f = cfg.frame;                                  // [south, west, north, east]
+    const ov = L.imageOverlay(cfg.relief, [[f[0], f[1]], [f[2], f[3]]],
+                              {interactive:false, className:'reliefLayer'});
+    ov.addTo(map);
+    reliefLayers.push(ov);
+  });
 }
 
 function setBase(which){
   if(which === 'street' && OFFLINE){ toast('离线版不含在线街道底图，请看矢量底图'); which = 'vector'; }
   if(which === 'image' && OFFLINE){ toast('离线版不含在线影像底图，请看矢量底图'); which = 'vector'; }
+  // 该校区没有立体底图（生成失败）时退回矢量底图 —— 必须在 baseLayer = which
+  // **之前**判，否则 baseLayer 记的是 'relief' 而实际画的是矢量，按钮高亮会错位。
+  if(which === 'relief' && !hasRelief(currentCampus)) which = 'vector';
   if(baseLayer !== which) { dropTiles(); tileFails = 0; }
 
   // 当前校区中心加上"底图坐标系补偿"，作为该底图下的视野中心
@@ -599,7 +670,11 @@ function setBase(which){
   const wantZoom = map.getZoom();
   baseLayer = which;
 
-  if(which === 'vector'){
+  if(which === 'relief'){
+    if(vectorLayer && map.hasLayer(vectorLayer)) map.removeLayer(vectorLayer);
+    addReliefLayers();
+    map.setView([c[0], c[1]], wantZoom, {animate:false});
+  } else if(which === 'vector'){
     if(vectorLayer && !map.hasLayer(vectorLayer)) vectorLayer.addTo(map);
     map.setView([c[0] + off[0], c[1] + off[1]], wantZoom, {animate:false});
   } else {
@@ -621,6 +696,7 @@ function updateBaseButtons(){
     b.disabled = !!disabled;
     b.style.opacity = disabled ? .45 : 1;
   };
+  mark('btnRelief', baseLayer === 'relief', !hasRelief(currentCampus));
   mark('btnStreet', baseLayer === 'street', false);
   mark('btnSat', baseLayer === 'image', false);
   mark('btnVector', baseLayer === 'vector', false);
@@ -845,6 +921,7 @@ function buildControls(){
   }));
 
   el('q').addEventListener('input', debounce(()=>{ render(); syncHash(); }, 200));
+  el('btnRelief').onclick = () => { setBase('relief'); buildVectorLayer(); render(); renderNote(); };
   el('btnStreet').onclick = () => { setBase('street'); buildVectorLayer(); renderNote(); };
   el('btnSat').onclick    = () => { setBase('image');  buildVectorLayer(); render(); renderNote(); };
   el('btnVector').onclick = () => { setBase('vector'); buildVectorLayer(); render(); renderNote(); };
@@ -882,6 +959,8 @@ function noteHtml(){
     else parts.push('🛰 当前为高德卫星底图');
   } else if(baseLayer === 'street'){
     parts.push('🗺 当前为 OSM 街道底图（WGS84 原始坐标，无需纠偏）');
+  } else if(baseLayer === 'relief'){
+    parts.push('🏞 当前为自绘立体底图（与投稿选机位时是同一张图）');
   } else {
     parts.push('⛰ 当前为矢量建筑底图（断网可用）');
   }
@@ -922,7 +1001,7 @@ function switchCampus(key){
   });
   dropTiles();
   buildVectorLayer();
-  setBase(baseLayer === 'none' ? (OFFLINE ? 'vector' : (fellBack ? 'vector' : 'street')) : baseLayer);
+  setBase(baseLayer === 'none' ? 'relief' : baseLayer);
   if(baseLayer !== 'none'){
     if(key === 'all'){ fitAll(); }
     else {
@@ -1005,8 +1084,9 @@ if(EMBED){ document.body.classList.add('embed'); }
 initMap();
 buildControls();
 render();
-// 默认街道底图（OSM，WGS84 免纠偏）；离线版直接上矢量底图
-setBase(OFFLINE ? 'vector' : 'street');
+// 默认**自绘立体底图**：与投稿页选机位看到的是同一张图（用户 2026-10-05 要求），
+// 而且它是内嵌的、不依赖网络。在线版/离线版都默认它；想比对真实影像再手动切别的。
+setBase('relief');
 buildVectorLayer();
 renderNote();
 

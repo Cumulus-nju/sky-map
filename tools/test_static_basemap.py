@@ -409,6 +409,32 @@ try:
 except Exception as exc:
     check("校园虚线/排除规则", False, f"{type(exc).__name__}: {exc}")
 
+print("\n[11] 成品地图「校园天空打卡点地图」的底图 == 投稿选机位那张图")
+# 用户 2026-10-05 要求："校园天空打卡点地图 这个模块里的地图也应该用和选机位时
+# 用的地图一样的图"。判据取 **data URL 逐字节相同**，不是"看起来像"：
+# 两边各自调 frame_image_for 也能碰巧一致，但谁换个宽度/数据源就会**静默分叉**，
+# 而分叉的后果是"同一栋楼，投稿页和成品页长得不一样"，肉眼很难发现。
+try:
+    import map_build as _mb
+
+    _p = _mb.build_payload([], embed_photos=False)
+    _bad = []
+    for _k in CAMPUSES:
+        _want = sb.frame_image_for(_k, *frame_of(_k), target_width=2000).data_url()
+        if _p["campuses"][_k].get("relief") != _want:
+            _bad.append(_k)
+    check("三校区：成品地图底图 == 选机位底图（逐字节）", not _bad, f"不一致：{_bad}")
+
+    _html = _mb.render_html(_p, offline=False)
+    check("HTML 含立体底图图层 + 切换按钮 + 默认选它",
+          "function addReliefLayers" in _html and 'id="btnRelief"' in _html
+          and "setBase('relief')" in _html)
+    # 立体图只盖住外框，框外没瓦片可铺 —— 底色必须是浅色，否则露出深色成"黑边"
+    check("框外底色已改成浅灰（不然立体图四周是黑边）",
+          "#map.relief{background:#e9ecef}" in _html)
+except Exception as exc:
+    check("成品地图底图一致性", False, f"{type(exc).__name__}: {exc}")
+
 print("\n" + "=" * 66)
 # 清理测试自己生成的中间产物。
 #
