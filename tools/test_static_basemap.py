@@ -155,6 +155,20 @@ try:
     check("只有选点才触发 rerun（拖动/缩放的闪烁已修）",
           "if (isPick) window.parent.dispatchEvent" in doc
           and doc.count("dispatchEvent(new PopStateEvent('popstate'))") == 1)
+    # ⚠ 初始 CSS 尺寸必须与图片同比例：老写法初始是 1200×980（宽度没按高反推），
+    #   图加载完再被 fitToParent() 缩成 884×980 ⇒ **每次组件重建横向跳一下**
+    #   （选点必然触发一次重建 ⇒ 用户看到的"选点后闪一下"）。
+    import re as _re2
+    _sz = _re2.search(r"#frame \{ position:relative; width:(\d+)px; height:(\d+)px", doc)
+    _r_init = (int(_sz.group(1)) / int(_sz.group(2))) if _sz else float("nan")
+    _r_img = img.width / img.height
+    check("组件初始尺寸即图片比例（重建不再横向跳/闪）",
+          bool(_sz) and abs(_r_init - _r_img) < 0.01,
+          f"初始 {_sz.group(1) if _sz else '?'}×{_sz.group(2) if _sz else '?'}"
+          f"（比 {_r_init:.3f}）vs 图片比 {_r_img:.3f}")
+    check("点击→坐标用内容盒原点（修掉 1px 边框偏移）",
+          "function frameOrigin()" in doc and "frame.clientLeft" in doc
+          and "clientX - r.left" not in doc)
     # --- 移动端适配（2026-10-05：手机必须能缩放 + 提示文案要对得上实现）---
     check("含双指捏合缩放", "pinch" in doc and "Math.log2(d / pinch.d0)" in doc)
     check("缩放锚点只实现一处（滚轮/双指/按钮共用）",

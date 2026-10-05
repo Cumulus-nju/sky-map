@@ -164,6 +164,13 @@ def build_picker_html(
     ratio = frame_ratio(fi)
     base_w = min(MAX_W, max(MIN_W, display_width))
     base_h = min(max_display_height, base_w * ratio)
+    # ⚠ 初始尺寸必须**本身就是终态比例**（按高度反推宽度）。
+    #   老写法：base_w 取 display_width(1200) 而 base_h 被 maxH(980) 夹住 ⇒ 初始 CSS 是
+    #   1200×980（比真实比例宽），等 img.onload → fitToParent() 再缩成 884×980 ⇒
+    #   **每次组件重建都"先宽后窄"跳一下**。用户 2026-10-05 反馈"选点后会闪一下"，
+    #   这就是主因（选点必须触发一次 Streamlit rerun，组件重建 ⇒ 又跳一次）。
+    if ratio > 0:
+        base_w = base_h / ratio
 
     marks = []
     if landmarks:
@@ -345,12 +352,21 @@ function render() {{
   zout.disabled = zoom <= 0;
 }}
 
-// 屏幕坐标 -> 原图像素
-function screenToImg(clientX, clientY) {{
+// ---------------- 屏幕坐标 -> 原图像素 ----------------
+// ⚠ 必须用**内容盒**原点：`#frame` 带 1px 边框，而 `#stage` 是绝对定位（相对 padding box），
+//   所以图像左上角在 (r.left + clientLeft, r.top + clientTop)。
+//   老代码直接拿边框盒的 r.left 算 ⇒ 整条"点击→坐标"链路**系统性偏 1 CSS 像素**
+//   （z=0 时约 2.3 原图像素）—— 用户 2026-10-05 反馈"点的位置和我鼠标的位置偏一点"，
+//   除了屋顶→楼基的吸附之外，这也是一个来源。
+function frameOrigin() {{
   const r = frame.getBoundingClientRect();
+  return [r.left + frame.clientLeft, r.top + frame.clientTop];
+}}
+function screenToImg(clientX, clientY) {{
+  const o = frameOrigin();
   const w = winW(), h = winH(), scale = vw() / w;
-  return [(cx - w / 2) + (clientX - r.left) / scale,
-          (cy - h / 2) + (clientY - r.top) / scale];
+  return [(cx - w / 2) + (clientX - o[0]) / scale,
+          (cy - h / 2) + (clientY - o[1]) / scale];
 }}
 
 // ---------------- 尺寸自适应 ----------------
@@ -408,10 +424,10 @@ frame.addEventListener('wheel', function (ev) {{
 // 为什么非要共用：各写一遍必然漂移，症状是"滚轮缩放是对的、双指一捏位置就跑了"，
 // 而且两边都不报错。
 function centerOn(p, clientX, clientY) {{
-  const r = frame.getBoundingClientRect();
+  const o = frameOrigin();
   const w = winW(), h = winH(), scale = vw() / w;
-  cx = p[0] + w / 2 - (clientX - r.left) / scale;
-  cy = p[1] + h / 2 - (clientY - r.top) / scale;
+  cx = p[0] + w / 2 - (clientX - o[0]) / scale;
+  cy = p[1] + h / 2 - (clientY - o[1]) / scale;
   clampCenter();
 }}
 function zoomAtPoint(nz, clientX, clientY) {{

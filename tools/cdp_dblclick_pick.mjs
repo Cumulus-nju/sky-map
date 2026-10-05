@@ -128,7 +128,11 @@ const PICK_PROBE = [
   "    var sx = (px - left) * scale, sy = (py - top) * scale;",
   "    if (sx < 5 || sy < 5 || sx > vw() - 5 || sy > vh() - 5) continue;",
   "    var fr = frame.getBoundingClientRect();",
-  "    return {dz: dz, imgPt: [px, py], inFrame: [sx, sy],",
+  "    return {dz: dz, imgPt: [px, py],",
+  // ⚠ 加 frame.clientLeft/clientTop：组件内部已经把"1px 边框偏移"修掉了
+  //   （见 framePicker 的 frameOrigin()），探针这侧也必须用**内容盒**原点，
+  //   否则派发下去的坐标会比预期偏 1 CSS 像素（z=0 时约 2.3 原图像素）。
+  "            inFrame: [frame.clientLeft + sx, frame.clientTop + sy],",
   "            frameRect: [fr.left, fr.top], vp: [vw(), vh()],",
   "            snapPt: [g[0], g[1]],",
   "            want: imgPxToLatLng(g[0], g[1]),",
@@ -298,6 +302,18 @@ record("⑦ 拖动/缩放不再触发 Streamlit 重跑（不闪不卡）",
   !!(after7 && after7.pop === 0 && alive === true),
   `popstate=${after7 && after7.pop}（期望 0）· 组件存活=${alive}（期望 true）`
   + ` · zoom ${interacted && interacted.z0}→${interacted && interacted.zAfterWheel}`);
+
+// ============ ⑧ 组件初始尺寸 == 终态比例（否则每次重建都"先宽后窄"跳一下）============
+// 用户 2026-10-05："选点后还是会闪一下"。根因之一：初始 CSS 尺寸是 1200×980
+// （宽度没按高反推），等图加载完 fitToParent() 再缩成 884×980 ⇒ 肉眼一次横向跳。
+// 判据：payload 里的 outW/outH 比例必须与组件实际尺寸比例一致（<1%）。
+const geo8 = await frameEval("({outW: D.outW, outH: D.outH, vw: vw(), vh: vh()})");
+const rInit = geo8 ? geo8.outW / geo8.outH : NaN;
+const rNow = geo8 ? geo8.vw / geo8.vh : NaN;
+record("⑧ 组件初始尺寸即终态比例（重建不跳/不闪）",
+  Number.isFinite(rInit) && Math.abs(rInit - rNow) < 0.01,
+  `初始 ${geo8 && geo8.outW}×${geo8 && geo8.outH}（比 ${Number(rInit).toFixed(3)}）`
+  + ` vs 实际 ${geo8 && geo8.vw}×${geo8 && geo8.vh}（比 ${Number(rNow).toFixed(3)}）`);
 
 // ============ ④ 真·触屏双击轻点（移动端机型仿真）============
 console.log("\n--- ④ 真触屏：390×844 机型 + Input.dispatchTouchEvent ---");
