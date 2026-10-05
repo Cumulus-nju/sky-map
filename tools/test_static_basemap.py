@@ -145,6 +145,16 @@ try:
     check("双击不会选中文字", "user-select:none" in doc)
     check("双击走 pointer 事件（桌面/触屏同一套逻辑）",
           "performance.now()" in doc and "Math.hypot(ev.clientX - tap.x" in doc)
+    # ⚠ 手势**按设备分开**（用户 2026-10-05："电脑端和以前一样是右键单击选点啊"）：
+    #   双击轻点只在触屏上算选点，鼠标的两次左键点击**不能**选点。
+    check("电脑端只认右键：鼠标双击不选点",
+          "if (ev.pointerType === 'mouse') return;" in doc)
+    # ⚠ 视图变化（拖动/滚轮/捏合）**不能**触发 rerun：Streamlit 靠 popstate 重跑脚本，
+    #   一重跑整个组件就被重建、约 1MB 的底图重新解码 ⇒ 交互时"一闪一闪"且卡
+    #   （用户 2026-10-05 反馈）。所以 popstate 必须只在选点时发。
+    check("只有选点才触发 rerun（拖动/缩放的闪烁已修）",
+          "if (isPick) window.parent.dispatchEvent" in doc
+          and doc.count("dispatchEvent(new PopStateEvent('popstate'))") == 1)
     # --- 移动端适配（2026-10-05：手机必须能缩放 + 提示文案要对得上实现）---
     check("含双指捏合缩放", "pinch" in doc and "Math.log2(d / pinch.d0)" in doc)
     check("缩放锚点只实现一处（滚轮/双指/按钮共用）",

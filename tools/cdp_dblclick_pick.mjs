@@ -1,19 +1,18 @@
-// **双击选点**的端到端验证（2026-10-05 新增手势：桌面双击 / 手机双击轻点）。
+// 选点手势的端到端验证（2026-10-05：**电脑右键单击** / **手机双击轻点**）。
 //
 // 为什么要单独一个脚本：把选点从"右键"改成"双击"以后，**入口事件换了**。
 // 函数级测试（snapToFootprint / inPoly 那些）全绿也证明不了"同学双击一下真能选中"——
 // 计数窗口、位移阈值、"拖动后作废连击"任何一处写错，症状都是**双击毫无反应**（静默）。
 //
-// 验六件事：
-//   ① 单击一下 **不能** 选中（否则拖动收尾就会误选）
-//   ② 快速双击 **能** 选中，且坐标 = 吸附后的楼基（不是屋顶）
-//   ③ 点一下 → 拖动 → 再点一下 **不能** 选中（拖动作废连击）
-//   ④ 真·触屏双击轻点（CDP `Input.dispatchTouchEvent` + 移动端机型仿真）**能** 选中
-//      —— 这一条才是"手机用户到底交不交得了稿"的答案
-//   ⑤ 真·触屏双指捏合：缩放级 +1 且两指中点下的地物不跑，并回传给 Streamlit
+// **选点手势现在是按设备分开的**，所以判据也分两路：
+//   电脑：提示写"右键"；**左键单击、左键双击都不选**；**右键单击**选中且落点 = 吸附后楼基
+//   手机：提示写"双指/双击轻点"；**双击轻点**选中；点一下→拖动→再点一下**不**选（拖动作废连击）
+//   手机：真·触屏双击轻点（CDP `Input.dispatchTouchEvent` + 390×844 机型仿真）端到端选中
+//         —— 这一条才是"手机用户到底交不交得了稿"的答案
+//   手机：真·触屏双指捏合：缩放级 +1、中点下的地物不跑，并回传给 Streamlit
 //   ⑤c 合成捏合（坐标完全可控）：锚点漂移必须 ≈0 —— 把"算法准不准"与
 //      "浏览器触摸坐标微调带来的噪声"分开，否则量到的漂移说不清是谁的
-//   ①b/④b 提示文案按设备给：桌面说"滚轮"、手机说"双指"，且与实现一致
+//   ⑥ 缩放按钮 +1/−1 仍然有效（本次把滚轮/双指/按钮合并成了 zoomAtPoint）
 //
 // 用法: node tools/cdp_dblclick_pick.mjs [app_url]
 import { spawn } from "node:child_process";
@@ -93,13 +92,19 @@ const frameEval = async (inner) => {
 };
 
 // 等组件就绪（Streamlit 首屏 + 组件 iframe 都要时间）
+// ⚠ 线上（Streamlit Cloud）**冷启动可能 1~2 分钟**（休眠唤醒 + 容器拉起），
+//   本地十几秒就好。用同一套 45 秒去等线上，会得到"组件始终没就绪"的假失败
+//   —— 2026-10-05 就被这个晃了一次，以为线上坏了。
+const REMOTE = !/^https?:\/\/(localhost|127\.0\.0\.1)/.test(url);
+const READY_TRIES = REMOTE ? 120 : 30;          // ×1.5s = 180s / 45s
 const waitReady = async (label) => {
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < READY_TRIES; i++) {
     await sleep(1500);
     const r = await ev(IN_FRAME("'ok'"));
     if (r && r.found) return true;
+    if (REMOTE && i > 0 && i % 20 === 0) console.log(`   …等线上冷启动 ${(i * 1.5).toFixed(0)}s`);
   }
-  console.log(`✗ ${label}: 组件始终没就绪`);
+  console.log(`✗ ${label}: 组件始终没就绪（等了 ${(READY_TRIES * 1.5).toFixed(0)}s）`);
   return false;
 };
 
@@ -133,16 +138,16 @@ const PICK_PROBE = [
   "})()",
 ].join("\n");
 
-// ---------------- 合成 pointer 事件（验"逻辑"）----------------
-// 用 dispatchEvent 而不是 CDP 合成鼠标事件的**理由不同**于右键那套：
-// 这里要验的是我们自己写的"数两次轻点"这段逻辑，事件源是谁不重要；
-// 而真·触屏那一环（④）会另外用 CDP 的真实输入管线单独验。
-const seq = (parts) => "(function(){"
+// ---------------- 合成事件（验"逻辑"）----------------
+// `pt` 是 pointerType，**必须传对**：手势现在按设备分开了 ——
+// 电脑认**右键**（contextmenu），双击轻点**只在触屏上**算选点，
+// 所以拿 pt='mouse' 还是 'touch' 发事件，预期结果完全不同。
+const seq = (parts, pt = "touch") => "(function(){"
   + "tap.t = 0;"                                  // 每个用例前清掉连击残留，免得用例相互污染
   + "function pd(type,x,y,buttons){"
   + "  frame.dispatchEvent(new PointerEvent(type,{clientX:x,clientY:y,"
   + "    button:0,buttons:buttons,bubbles:true,cancelable:true,"
-  + "    pointerId:1,pointerType:'mouse',isPrimary:true}));}"
+  + "    pointerId:1,pointerType:" + JSON.stringify(pt) + ",isPrimary:true}));}"
   + parts
   + "function urlPick(){try{return new URL(window.parent.location.href)"
   + "  .searchParams.get('pick');}catch(e){return 'ERR:'+e;}}"
@@ -152,6 +157,13 @@ const seq = (parts) => "(function(){"
   + "})()";
 
 const TAP = (x, y) => `pd('pointerdown',${x},${y},1);pd('pointerup',${x},${y},0);`;
+// 电脑端选点：右键单击（contextmenu）。合成它而不是用 Input.dispatchMouseEvent，
+// 理由同 cdp_snap_click.mjs：headless 下合成右键**不一定**派发 contextmenu。
+const RCLICK = (x, y) => `frame.dispatchEvent(new MouseEvent('contextmenu',{clientX:${x},`
+  + `clientY:${y},bubbles:true,cancelable:true,button:2}));`;
+// 拖动：位移 > 3px 阈值 ⇒ 认定成拖动（而不是点击）
+const DRAG = (x, y) => `pd('pointerdown',${x},${y},1);`
+  + `pd('pointermove',${x + 4},${y + 4},1);pd('pointerup',${x + 4},${y + 4},0);`;
 
 // ---------------- 逐用例 ----------------
 const results = [];
@@ -164,50 +176,74 @@ const navigate = async () => {
   await send("Page.navigate", { url }, sid);
 };
 
-// ============ ① 单击不能选中 / ② 双击能选中（同一次页面加载）============
+// ============ ① 电脑端：提示写着右键 / 左键单击与双击都**不**选 ============
 await navigate();                                   // ⚠ 别忘了先导航（target 出生在 about:blank）
-if (!await waitReady("① 双击")) { try { child.kill(); } catch {} process.exit(1); }
+if (!await waitReady("① 电脑端")) { try { child.kill(); } catch {} process.exit(1); }
 const info = await frameEval(PICK_PROBE);
 console.log("挑中的屋顶:", JSON.stringify(info));
 if (!info || info.err) { try { child.kill(); } catch {} process.exit(1); }
 const [fx, fy] = info.inFrame;
 console.log(`组件内坐标 (${fx.toFixed(1)}, ${fy.toFixed(1)})，吸附位移 ${info.dz.toFixed(0)} px`);
 
-const single = await frameEval(seq(TAP(fx, fy)));
-record("① 单击一下**不**选中", !!(single && !single.on && !single.pick),
+// 电脑端提示必须是"右键"那套 —— 用户 2026-10-05 的原话：
+// "电脑端和以前一样是右键单击选点啊"，提示里不能写"双击"。
+const tipDesk = await frameEval("hint.textContent");
+record("① 电脑端提示 = 滚轮/右键那套",
+  typeof tipDesk === "string" && tipDesk.indexOf("滚轮") >= 0
+  && tipDesk.indexOf("右键") >= 0 && tipDesk.indexOf("双指") < 0
+  && tipDesk.indexOf("双击") < 0, `"${tipDesk}"`);
+
+const single = await frameEval(seq(TAP(fx, fy), "mouse"));
+record("①b 电脑左键单击**不**选中", !!(single && !single.on && !single.pick),
   JSON.stringify(single));
 
-// 桌面提示文案必须还是"滚轮/左键"那套（按设备给文案别把桌面也改了）
-const tipDesk = await frameEval("hint.textContent");
-record("①b 桌面提示 = 滚轮/左键那套", typeof tipDesk === "string" && tipDesk.indexOf("滚轮") >= 0
-  && tipDesk.indexOf("双指") < 0, `"${tipDesk}"`);
+// 连点两下左键也**不**能选中：电脑端只认右键，不能凭空多出一条没人要求的新手势
+const dblMouse = await frameEval(seq(TAP(fx, fy) + TAP(fx, fy), "mouse"));
+record("①c 电脑左键双击**也不**选中（只认右键）",
+  !!(dblMouse && !dblMouse.on && !dblMouse.pick), JSON.stringify(dblMouse));
 
-// 双击：两次轻点必须落在 DBL_MS(350ms) 窗口内 —— 同一个 eval 里同步派发，间隔≈0
-const dbl = await frameEval(seq(TAP(fx, fy) + TAP(fx, fy)));
-const got = dbl && dbl.pick ? dbl.pick.split(",").map(Number) : null;
+// ============ ② 电脑端：右键单击 = 选中，且落点是吸附后的楼基 ============
 const want = info.want;
+const rc = await frameEval(seq(RCLICK(fx, fy), "mouse"));
+const got = rc && rc.pick ? rc.pick.split(",").map(Number) : null;
 const dWant = got ? Math.max(Math.abs(got[0] - want[0]), Math.abs(got[1] - want[1])) : NaN;
-const pinOk = !!(dbl && dbl.on && dbl.pin)
-  && Math.abs(dbl.pin[0] - info.snapPt[0]) < 1.0
-  && Math.abs(dbl.pin[1] - info.snapPt[1]) < 1.0;
-record("② 双击选中，坐标 = 吸附后的楼基",
-  !!got && dWant <= 1.5e-4 && pinOk,
-  `pick=${dbl && dbl.pick} 期望≈${want.map(v => v.toFixed(4))} 差 ${dWant.toExponential(2)}° pinOk=${pinOk}`);
+// ⚠ 容差 3 原图像素（而不是 1）：浏览器会把派发的事件坐标**按整数取整**
+//   （MouseEventInit 的 clientX/clientY 是 long），z=0 时 1 CSS px ≈ 1/0.442 ≈ 2.3
+//   原图像素 ⇒ 拿 1px 去卡，会把"完全正常"误判成失败（第一版就报了这个假失败）。
+const pinOk = !!(rc && rc.on && rc.pin)
+  && Math.abs(rc.pin[0] - info.snapPt[0]) < 3.0
+  && Math.abs(rc.pin[1] - info.snapPt[1]) < 3.0;
+// 另外确认**吸附真发生了**（落针不能停在点击处）
+const snapMoved = !!(rc && rc.pin)
+  && Math.hypot(rc.pin[0] - info.imgPt[0], rc.pin[1] - info.imgPt[1]) > 1;
+record("② 电脑右键单击选中，坐标 = 吸附后的楼基",
+  !!got && dWant <= 1.5e-4 && pinOk && snapMoved,
+  `pick=${rc && rc.pick} 期望≈${want.map(v => v.toFixed(4))} 差 ${dWant.toExponential(2)}°`
+  + ` on=${rc && rc.on} 吸附位移=${rc && rc.pin ? Math.hypot(rc.pin[0] - info.imgPt[0], rc.pin[1] - info.imgPt[1]).toFixed(1) : "?"}px`);
 
-// ============ ③ 点一下→拖动→再点一下 不能选中 ============
+// ============ ③ 手机端（合成触屏）：双击轻点选中，拖动作废连击 ============
 // 拖动会 report(false) 触发 Streamlit rerun（组件会被重建），所以单独重载一次页面。
 await navigate();
-if (!await waitReady("③ 拖动作废连击")) { try { child.kill(); } catch {} process.exit(1); }
+if (!await waitReady("③ 手机手势")) { try { child.kill(); } catch {} process.exit(1); }
 const info3 = await frameEval(PICK_PROBE);
 if (!info3 || info3.err) { console.log("✗ ③ 挑不到屋顶:", JSON.stringify(info3)); try { child.kill(); } catch {} process.exit(1); }
 const [gx, gy] = info3.inFrame;
-const dragSeq = TAP(gx, gy)
-  + `pd('pointerdown',${gx},${gy},1);`
-  + `pd('pointermove',${gx + 4},${gy + 4},1);`   // > 3px 阈值 ⇒ 认定成拖动
-  + `pd('pointerup',${gx + 4},${gy + 4},0);`
-  + TAP(gx, gy);                                  // 紧接着再点一下：因为中间拖动过，不能算双击
-const afterDrag = await frameEval(seq(dragSeq));
-record("③ 拖动作废连击（拖完立刻点一下不算双击）",
+
+// 先验正的：双击轻点必须选中（否则下面那个"没选中"说明不了任何事）
+const dblTouch = await frameEval(seq(TAP(gx, gy) + TAP(gx, gy), "touch"));
+record("③ 手机双击轻点选中", !!(dblTouch && dblTouch.on && dblTouch.pick),
+  JSON.stringify({ on: dblTouch && dblTouch.on, pick: dblTouch && dblTouch.pick }));
+
+// 再验反的：点一下 → 拖动 → 再点一下 ⇒ 中间拖动过，不能算双击
+// ⚠ **必须重新加载页面**：上面的 ③ 已经成功选过一次，pin 还亮着、URL 里也还挂着 pick，
+//   不重载就根本分不出"这次到底有没有选中"（第一版就栽在这儿，报了个假失败）。
+await navigate();
+if (!await waitReady("③b 拖动作废连击")) { try { child.kill(); } catch {} process.exit(1); }
+const info3b = await frameEval(PICK_PROBE);
+if (!info3b || info3b.err) { console.log("✗ ③b 挑不到屋顶:", JSON.stringify(info3b)); try { child.kill(); } catch {} process.exit(1); }
+const [hx, hy] = info3b.inFrame;
+const afterDrag = await frameEval(seq(TAP(hx, hy) + DRAG(hx, hy) + TAP(hx, hy), "touch"));
+record("③b 手机：拖动作废连击（拖完立刻点一下不算双击）",
   !!(afterDrag && !afterDrag.on && !afterDrag.pick), JSON.stringify(afterDrag));
 
 // ============ ⑥ 缩放按钮（手机上的兜底缩放方式）============
@@ -226,6 +262,42 @@ const btn = await frameEval(`(function(){
 })()`);
 record("⑥ 缩放按钮仍有效（+1 再 −1 回到原级）",
   !!(btn && btn.z1 === btn.z0 + 1 && btn.z2 === btn.z0), JSON.stringify(btn));
+
+// ============ ⑦ 视图变化**不能**触发 Streamlit rerun（否则交互时"一闪一闪"）============
+// 用户 2026-10-05 反馈："和地图交互时经常一闪一闪的（可能是重定位？），手感很怪很卡顿"。
+// 根因：report() 每写一次视图就 dispatchEvent(popstate)，而 Streamlit 靠 popstate 重跑脚本
+// ⇒ 每拖一下 / 每滚一格，整个组件被**重建**，那张 ~1MB 的底图重新解码 ⇒ 闪 + 卡。
+// 修法：视图变化只 replaceState 写 URL（pnav 照样留着），只有**选点**才触发 rerun。
+// 判据两条：父页面 popstate 计数 == 0，且组件里打的存活标记还在（说明没被重建）。
+await navigate();
+if (!await waitReady("⑦ 视图变化不重跑")) { try { child.kill(); } catch {} process.exit(1); }
+await ev("(function(){ window.__pop = 0;"
+  + " window.addEventListener('popstate', function(){ window.__pop++; }); return true; })()");
+await frameEval("(function(){ window.__alive = 1; return 1; })()");
+const interacted = await frameEval(`(function(){
+  const r = frame.getBoundingClientRect();
+  const mx = r.left + vw() / 2, my = r.top + vh() / 2;
+  const z0 = zoom;
+  for (let i = 0; i < 3; i++) {
+    frame.dispatchEvent(new WheelEvent('wheel', {clientX: mx, clientY: my, deltaY: -100,
+      bubbles: true, cancelable: true}));
+  }
+  const zAfterWheel = zoom;
+  // 再拖一次（拖动结束也会 report(false)）
+  const pd = (type, x, y, buttons) => frame.dispatchEvent(new PointerEvent(type,
+    {clientX: x, clientY: y, button: 0, buttons: buttons, bubbles: true, cancelable: true,
+     pointerId: 1, pointerType: 'mouse', isPrimary: true}));
+  pd('pointerdown', mx, my, 1); pd('pointermove', mx + 20, my + 12, 1);
+  pd('pointerup', mx + 20, my + 12, 0);
+  return {z0: z0, zAfterWheel: zAfterWheel};
+})()`);
+await sleep(4000);   // 真有 rerun 的话，足够把组件换掉
+const after7 = await ev("({pop: window.__pop, nIframe: document.querySelectorAll('iframe').length})");
+const alive = await frameEval("window.__alive === 1");
+record("⑦ 拖动/缩放不再触发 Streamlit 重跑（不闪不卡）",
+  !!(after7 && after7.pop === 0 && alive === true),
+  `popstate=${after7 && after7.pop}（期望 0）· 组件存活=${alive}（期望 true）`
+  + ` · zoom ${interacted && interacted.z0}→${interacted && interacted.zAfterWheel}`);
 
 // ============ ④ 真·触屏双击轻点（移动端机型仿真）============
 console.log("\n--- ④ 真触屏：390×844 机型 + Input.dispatchTouchEvent ---");
@@ -389,7 +461,8 @@ if (rect5 && geo5 && geo5.vp) {
 }
 
 console.log("\n" + JSON.stringify({
-  roofDz: info.dz, singleTap: single, doubleTap: dbl, afterDrag,
+  roofDz: info.dz, leftSingle: single, leftDouble: dblMouse, rightClick: rc,
+  touchDouble: dblTouch, afterDrag,
   wantSnapped: want, rawUnsnapped: info.raw,
 }, null, 2));
 

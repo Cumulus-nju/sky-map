@@ -10,22 +10,19 @@
        经纬度 = fi.px_to_latlng(原图 x, 原图 y)
 
    因为窗口本身也是用同一套坐标算出来的，所以**任何缩放级下都严格对齐**。
-3. **交互映射（2026-10-05 改版）**：
+3. **交互映射（2026-10-05 定稿）**：
        滚轮 / 双指  = 缩放
-       **左键按住**  = 拖动平移
-       **双击**      = 选点（桌面双击 / 手机双击轻点，**同一套手势**）
+       **按住**      = 拖动平移
+       **右键单击**  = 选点（**电脑端**，与 2026-10-02 起的老习惯一致）
+       **双击轻点**  = 选点（**仅手机/触屏**）
 
-   为什么是"双击"，而不是"左键单击选点"、也不是"长按选点"：
-   拖动 = 按住 + **有位移**，双击 = 两次 **无位移** 的轻点，两者天然正交、互不误判。
-   而**长按**要跟拖动抢"同一根手指、同一个起点"，只能靠计时器 + 几像素的位移阈值
-   去猜，用户按下后稍一犹豫（尤其手机上）就会把平移变成选点 —— 用户 2026-10-05
-   明确否掉了长按方案（"长按选点可能和拖动冲突"）。
+   为什么要分两套：**电脑一定要保留右键单击**（用户 2026-10-05 明确要求，
+   桌面同学早就习惯了），而**手机没有右键**，机位又是**必填** ——
+   不给手机一个手势，手机用户就交不了稿 ⇒ 手机上补"双击轻点"。
 
-   手机能选点这件事**靠的就是双击**：触屏没有右键，改成双击之前手机上根本选不了点，
-   而机位是**必填** ⇒ 等于手机用户交不了稿。
-
-   桌面右键选点**保留**（不写进提示文案，纯兜底）：右键永远不会被拖动占用，
-   留着零成本，也供现有 CDP 验证脚本（`tools/cdp_snap_click.mjs` 等）继续使用。
+   为什么手机是双击、而不是长按：拖动 = 按住 + **有位移**，双击 = 两次 **无位移** 的
+   轻点，两者天然正交；而**长按**要跟拖动抢"同一根手指、同一个起点"，只能靠计时器
+   + 几像素阈值去猜，用户按下后稍一犹豫就把平移变成选点（用户 2026-10-05 否掉了长按）。
 4. **宽度自适应**：Streamlit 的 `components.html` 只收整数宽度，写死会在窄屏被裁。
    所以组件自己监听父窗口尺寸，把 `#frame` 的宽度设成父容器宽度（并夹住上下限），
    顺带把 iframe 高度也调好（否则下方会留一大块空白）。
@@ -145,8 +142,8 @@ def build_picker_html(
     nav: tuple[float, float, int] | None = None,
     landmarks: dict[str, tuple[float, float]] | None = None,
     max_display_height: float = 980.0,
-    tip: str = "滚轮缩放 · 左键按住拖动 · 双击选点",
-    tip_mobile: str = "双指缩放 · 单指拖动 · 双击选点",
+    tip: str = "滚轮缩放 · 左键按住拖动 · 右键选点",
+    tip_mobile: str = "双指缩放 · 单指拖动 · 双击轻点选点",
     roofs: dict | None = None,
 ) -> tuple[str, float]:
     """生成点选组件的 HTML，返回 (html, 建议组件高度)。
@@ -440,11 +437,14 @@ const ptrs = new Map();                 // pointerId -> {{x, y}}（当前按下�
 let drag = null;
 let pinch = null;                       // {{d0, z0, mid, dirty}}
 
-// **双击 / 双击轻点 = 选点**（见文件头"交互映射"）
+// **双击轻点 = 选点（仅触屏）**；电脑端是**右键单击**选点（见文件头"交互映射"）。
+//
+// 为什么手机非有双击不可：触屏没有右键，而机位是**必填** ——
+// 不给手机一个选点手势，手机用户就交不了稿。
 //
 // 为什么不用浏览器自带的 `dblclick` 事件：触屏上 `dblclick` 各浏览器行为不一
 // （不少手机根本不派发），而 `pointerdown/pointerup` 鼠标和手指走的是同一套 ——
-// 自己数"两次无位移的轻点"最稳，桌面手机一份逻辑。
+// 自己数"两次无位移的轻点"最稳，再按 `pointerType` 把鼠标排除掉。
 //
 // 与拖动为什么不会打架：拖动一定会先 `moved`（位移 >3px）⇒ 直接作废连击计数；
 // 双击则两次都没有位移。两者互斥，不需要计时器去猜"用户是想拖还是想选"。
@@ -535,6 +535,11 @@ frame.addEventListener('pointerup', function (ev) {{
     report(false);
     return;
   }}
+  // ⚠ **双击轻点只在触屏上算选点**：电脑端照旧是**右键单击**选点。
+  //   桌面习惯保持 2026-10-02 定下的那套（用户 2026-10-05 明确：
+  //   "电脑端和以前一样是右键单击选点啊"），所以鼠标的两次左键点击**不产生选点**——
+  //   免得电脑上凭空多出一条没人要求的新手势。
+  if (ev.pointerType === 'mouse') return;
   const now = performance.now();
   if (now - tap.t <= DBL_MS && Math.hypot(ev.clientX - tap.x, ev.clientY - tap.y) <= DBL_PX) {{
     tap.t = 0;                            // 用掉这次连击，避免"点三下"被算成两次双击
@@ -612,6 +617,17 @@ img.onload = function () {{
 img.src = D.img;
 
 // ---------------- 回传（查询参数 -> Streamlit rerun）----------------
+// ⚠ **只有"选点"才主动触发 rerun，视图变化只写 URL**（2026-10-05 修，用户反馈
+//   "和地图交互时经常一闪一闪的，手感很怪很卡顿"）。
+//
+// 原因：Streamlit 是靠 `popstate` 重跑脚本的。以前每拖一下 / 每滚一格都
+// `dispatchEvent(popstate)` ⇒ 整个 `components.html` 被**重建** ⇒ 那张约 1 MB 的
+// 底图 data URL 要重新解码、重新布局 ⇒ 肉眼就是"闪一下 + 卡"。
+// 而 `pnav` 的唯一用途是"下次 rerun 时恢复视图"，**写进 URL 就够了**；
+// 真正的 rerun 交给选点去触发，那一次报告**自带 pnav**，所以视图照样恢复。
+//
+// 判据（tools/cdp_dblclick_pick.mjs 第⑦项）：滚 3 格 + 拖 1 次后，
+// 父页面的 popstate 计数必须为 0，且组件里的存活标记还在（没被重建）。
 function report(isPick, lat, lon) {{
   const nl = imgPxToLatLng(cx, cy);
   // 4 位小数 ≈ 11 m，远细于"能点准一栋楼"；位数少能让坐标显示更好看
@@ -622,8 +638,11 @@ function report(isPick, lat, lon) {{
     u.searchParams.set('pnav', navStr);
     if (pickStr) {{ u.searchParams.set('pick', pickStr); u.searchParams.set('pick_campus', D.campus); }}
     window.parent.history.replaceState({{}}, '', u.toString());
-    window.parent.dispatchEvent(new PopStateEvent('popstate'));
+    // 只有选点才让 Streamlit 重跑（视图变化不重跑）
+    if (isPick) window.parent.dispatchEvent(new PopStateEvent('popstate'));
   }} catch (e) {{
+    // 兜底（history 被跨域等限制）：整页跳转会"闪"得更狠，所以**只在选点时**做
+    if (!isPick) return;
     try {{
       const u2 = new URL(window.parent.location.href);
       u2.searchParams.set('pnav', navStr);
