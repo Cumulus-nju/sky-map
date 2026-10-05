@@ -200,7 +200,10 @@ def build_payload(subs: list[Submission], *, embed_photos: bool,
                 {
                     "sid": s.sid,
                     "title": s.title or "未命名",
-                    "author": s.author or "匿名",
+                    # ⚠ **不放作者名**：成品地图是公开的（还要导出分享），
+                    #   用户 2026-10-05 要求"名字/昵称不要在打卡地图里显示"。
+                    #   连放进 payload 都不行 —— 那样在网页源码里能搜到，
+                    #   等于还是泄露了。作者只在**管理后台**看得到。
                     "time": s.shot_time or "",
                     "weather": s.weather or "",
                     "kind": classify_weather(s.weather),
@@ -229,7 +232,7 @@ def build_payload(subs: list[Submission], *, embed_photos: bool,
     unresolved = [
         {
             "sid": s.sid, "campus": s.campus, "title": s.title or "未命名",
-            "loc_text": s.loc_text, "matched": s.loc_matched, "author": s.author or "匿名",
+            "loc_text": s.loc_text, "matched": s.loc_matched,
         }
         for s in subs
         if not s.has_point
@@ -419,18 +422,10 @@ body.embed #campusFloat{display:flex}
   box-shadow:0 3px 10px rgba(10,20,40,.35);border:2.5px solid #fff;
 }
 .sp .pin span{transform:rotate(45deg);color:#fff;font-weight:700;font-size:12px}
-.pinwrap{position:relative}
-/* 缩略图**默认不显示**（用户 2026-10-05 要求）：地图上只留序号，干净得多；
-   点哪个序号才展开哪个的缩略图（`.pinwrap.sel`）。
-   顺带也根治了原来那个观感问题 —— 以前它是常显的，图片一旦加载失败就只剩
-   一圈 2.5px 白边框，看着就是"序号右侧有一条白色竖线"。 */
-.pinwrap .cover{
-  position:absolute;left:26px;top:-4px;width:52px;height:52px;border-radius:9px;
-  border:2.5px solid #fff;object-fit:cover;box-shadow:0 3px 10px rgba(10,20,40,.32);background:#dfe5ec;
-  display:none;
-}
-.pinwrap.sel .cover{display:block;animation:coverIn .18s ease-out}
-@keyframes coverIn{from{opacity:0;transform:translateX(-7px) scale(.92)}to{opacity:1;transform:none}}
+/* 序号旁边**不做缩略图预览**（用户 2026-10-05 拍板"干脆就别要预览框了"）。
+   之前试过两版都不好：① 常显 → 图片加载失败时只剩一圈 2.5px 白边框，
+   像"序号右侧有条白色竖线"；② 点序号才展开 → 点别处（关弹窗、点列表）
+   预览框不消失，更烦。作品照片在**点开弹窗**里看就够了。 */
 #legend{
   position:absolute;right:12px;bottom:20px;z-index:500;background:var(--glass);
   backdrop-filter:blur(9px);border-radius:11px;padding:10px 12px;font-size:11px;
@@ -482,7 +477,7 @@ body.embed #campusFloat{display:flex}
     <div id="filters">
       <div class="row"><span class="lbl">校区</span><span id="campusTabs"></span></div>
       <div class="row"><span class="lbl">天象</span><span id="kindChips"></span></div>
-      <div class="row"><input id="q" placeholder="搜索打卡点 / 机位 / 作者 / 作品名…"></div>
+      <div class="row"><input id="q" placeholder="搜索打卡点 / 机位 / 作品名…"></div>
     </div>
     <div id="list"></div>
   </aside>
@@ -514,7 +509,6 @@ const DATA = __PAYLOAD__;
 const OFFLINE = __OFFLINE__;
 let map, vectorLayer = null, currentCampus = 'all';
 let selSpots = [], markerBySid = {}, tileFails = 0, fellBack = false;
-let selSid = null;                 // 当前选中的打卡点（决定哪张缩略图展开）
 let baseLayer = 'none';           // none | relief | street | image | vector
 let tileStreet = null, tileImage = null, reliefLayers = [];
 
@@ -527,8 +521,6 @@ function initMap(){
   map = L.map('map', {zoomControl:true, minZoom:3, maxZoom:19, preferCanvas:false})
           .setView(c.center, c.zoom);
   L.control.scale({imperial:false, position:'bottomleft'}).addTo(map);
-  // 点地图空白处 → 收起缩略图（跟 Leaflet 默认"点空白关弹窗"的行为一致）
-  map.on('click', () => selectMarker(null));
   applyFrame('gulou');
   buildVectorLayer();
   applyHash();
@@ -766,23 +758,16 @@ function renderMarkers(spots){
   markerBySid = {};
   spots.forEach((sp, i) => {
     const color = spotColor(sp.kind);
-    const cover = (sp.shots.find(s=>s.src)||{}).src || '';
     const ic = L.divIcon({
       className:'sp',
-      html:`<div class="pinwrap">
-              <div class="pin" style="background:${color}"><span>${i+1}</span></div>
-              ${cover?`<img class="cover" src="${cover}" alt="" onerror="this.remove()">`:''}
-            </div>`,
+      html:`<div class="pin" style="background:${color}"><span>${i+1}</span></div>`,
       iconSize:[34,34], iconAnchor:[17,34], popupAnchor:[0,-36]
     });
     const m = L.marker(tp(sp.lat, sp.lon), {icon:ic, riseOnHover:true}).addTo(map);
     m.bindPopup(popupHtml(sp), {maxWidth:300});
-    m.on('click', () => { highlight(sp.sid); selectMarker(sp.sid); });
+    m.on('click', () => highlight(sp.sid));
     markerBySid[sp.sid] = m;
   });
-  // 重建之后把"当前选中"的缩略图接回来（切换校区 / 改筛选都会走这里，
-  // 不接回来就会出现"选了但图没了"）。
-  selectMarker(selSid);
 }
 
 function popupHtml(sp){
@@ -792,7 +777,7 @@ function popupHtml(sp){
       ${s.src?`<img src="${s.src}" alt="">`:''}
       <div class="pb">
         <h3>${esc(s.title)}</h3>
-        <div class="au">${esc(s.author)}${s.award?` · <b style="color:var(--accent)">${esc(s.award)}</b>`:''}</div>
+        ${s.award?`<div class="au"><b style="color:var(--accent)">${esc(s.award)}</b></div>`:''}
         ${s.time?`<div class="kv"><i>拍摄</i><span>${esc(s.time)}</span></div>`:''}
         ${s.weather?`<div class="kv"><i>天象</i><span>${esc(s.weather)}</span></div>`:''}
         ${s.camera?`<div class="kv"><i>器材</i><span>${esc(s.camera)}</span></div>`:''}
@@ -828,8 +813,11 @@ function visibleSpots(){
     if(f.campus !== 'all' && sp.campus !== f.campus) return false;
     if(f.kinds.size && !f.kinds.has(sp.kind)) return false;
     if(f.q){
+      // ⚠ 搜索**不包含作者名**：打卡点地图是公开的，姓名/昵称不在地图上出现
+      //   （用户 2026-10-05 要求"名字/昵称不要在打卡地图里显示"），
+      //   能搜到名字就等于显示了。作者信息只在管理后台可见。
       const hay = [sp.name, sp.sid, DATA.campuses[sp.campus].name,
-                   ...sp.shots.flatMap(s=>[s.title,s.author,s.weather,s.note])].join(' ').toLowerCase();
+                   ...sp.shots.flatMap(s=>[s.title,s.weather,s.note])].join(' ').toLowerCase();
       if(!hay.includes(f.q)) return false;
     }
     return true;
@@ -862,7 +850,7 @@ function renderList(spots){
       <div class="no" style="background:${spotColor(sp.kind)}">${i+1}</div>
       <div class="body">
         <div class="ttl">${esc(first.title||sp.name||cfg.short)}</div>
-        <div class="meta">${esc(sp.name||cfg.short)} · ${sp.count} 幅${first.author?` · ${esc(first.author)}`:''}</div>
+        <div class="meta">${esc(sp.name||cfg.short)} · ${sp.count} 幅</div>
         <div class="tags">
           <span class="tag">${esc(DATA.campuses[sp.campus].short)}</span>
           <span class="tag">${esc((DATA.weatherKinds[sp.kind]||{}).label||sp.kind)}</span>
@@ -878,7 +866,6 @@ function renderList(spots){
     const sp = spots.find(s=>s.sid===sid);
     if(!sp) return;
     map.flyTo(tp(sp.lat, sp.lon), Math.max(map.getZoom(), 18), {duration:.6});
-    selectMarker(sid);                       // 从列表点进来时，缩略图也要跟着出现
     const m = markerBySid[sid];
     if(m){ setTimeout(()=>m.openPopup(), 380); }
   }));
@@ -888,18 +875,6 @@ function highlight(sid){
   document.querySelectorAll('.card').forEach(x=>x.classList.toggle('sel', x.dataset.sid===sid));
   const c = document.querySelector(`.card[data-sid="${sid}"]`);
   if(c) c.scrollIntoView({block:'nearest', behavior:'smooth'});
-}
-
-/* 缩略图跟随"当前选中的那个序号"（用户 2026-10-05：默认只显示序号，点一下才出缩略图）。
-   为什么不用 CSS :hover：鼠标一扫过就出一堆图，比常显还乱；要的是"点选"这个明确动作。*/
-function selectMarker(sid){
-  selSid = sid || null;
-  document.querySelectorAll('.pinwrap.sel').forEach(w=>w.classList.remove('sel'));
-  if(!sid) return;
-  const m = markerBySid[sid];
-  const root = m && m.getElement();          // Leaflet 给的 divIcon 根元素
-  const w = root && root.querySelector('.pinwrap');
-  if(w) w.classList.add('sel');
 }
 
 /* ---------------- 控件 ---------------- */
