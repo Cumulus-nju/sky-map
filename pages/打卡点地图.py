@@ -60,7 +60,14 @@ def build_maps(force: bool = False) -> tuple[bool, str]:
 
 @st.cache_data(show_spinner=False, ttl=300)
 def cached_map_html(n: int, offline: bool) -> str:
-    """按"投稿条数 + 版本"缓存生成的 HTML，避免每次交互都重算。"""
+    """按"投稿条数 + 版本"缓存生成的 HTML，避免每次交互都重算。
+
+    ⚠ **照片一律内嵌**（`embed_photos=True`），不能像导出文件那样走 `thumbs/` 相对路径：
+    这段 HTML 是塞进 `components.html` 的 iframe（srcdoc）里显示的，相对路径会相对
+    **Streamlit 页面地址**去解析 → 404 → 缩略图变成一个"白边框的裂图"。
+    症状（用户 2026-10-05 反馈）："打卡点地图上序号右侧有一条白色竖线，有点难看"。
+    （导出/分享用的 HTML 仍然用相对路径 —— 那个是连 `thumbs/` 文件夹一起发出去的。）
+    """
     subs = load_submissions()
     import contextlib
     import io
@@ -68,7 +75,7 @@ def cached_map_html(n: int, offline: bool) -> str:
     import map_build
 
     with contextlib.redirect_stdout(io.StringIO()):
-        payload = map_build.build_payload(subs, embed_photos=offline or CLOUD)
+        payload = map_build.build_payload(subs, embed_photos=True)
         return map_build.render_html(payload, offline=offline or CLOUD)
 
 

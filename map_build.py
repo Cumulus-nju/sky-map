@@ -420,10 +420,17 @@ body.embed #campusFloat{display:flex}
 }
 .sp .pin span{transform:rotate(45deg);color:#fff;font-weight:700;font-size:12px}
 .pinwrap{position:relative}
+/* 缩略图**默认不显示**（用户 2026-10-05 要求）：地图上只留序号，干净得多；
+   点哪个序号才展开哪个的缩略图（`.pinwrap.sel`）。
+   顺带也根治了原来那个观感问题 —— 以前它是常显的，图片一旦加载失败就只剩
+   一圈 2.5px 白边框，看着就是"序号右侧有一条白色竖线"。 */
 .pinwrap .cover{
   position:absolute;left:26px;top:-4px;width:52px;height:52px;border-radius:9px;
   border:2.5px solid #fff;object-fit:cover;box-shadow:0 3px 10px rgba(10,20,40,.32);background:#dfe5ec;
+  display:none;
 }
+.pinwrap.sel .cover{display:block;animation:coverIn .18s ease-out}
+@keyframes coverIn{from{opacity:0;transform:translateX(-7px) scale(.92)}to{opacity:1;transform:none}}
 #legend{
   position:absolute;right:12px;bottom:20px;z-index:500;background:var(--glass);
   backdrop-filter:blur(9px);border-radius:11px;padding:10px 12px;font-size:11px;
@@ -507,6 +514,7 @@ const DATA = __PAYLOAD__;
 const OFFLINE = __OFFLINE__;
 let map, vectorLayer = null, currentCampus = 'all';
 let selSpots = [], markerBySid = {}, tileFails = 0, fellBack = false;
+let selSid = null;                 // 当前选中的打卡点（决定哪张缩略图展开）
 let baseLayer = 'none';           // none | relief | street | image | vector
 let tileStreet = null, tileImage = null, reliefLayers = [];
 
@@ -519,6 +527,8 @@ function initMap(){
   map = L.map('map', {zoomControl:true, minZoom:3, maxZoom:19, preferCanvas:false})
           .setView(c.center, c.zoom);
   L.control.scale({imperial:false, position:'bottomleft'}).addTo(map);
+  // 点地图空白处 → 收起缩略图（跟 Leaflet 默认"点空白关弹窗"的行为一致）
+  map.on('click', () => selectMarker(null));
   applyFrame('gulou');
   buildVectorLayer();
   applyHash();
@@ -761,15 +771,18 @@ function renderMarkers(spots){
       className:'sp',
       html:`<div class="pinwrap">
               <div class="pin" style="background:${color}"><span>${i+1}</span></div>
-              ${cover?`<img class="cover" src="${cover}" alt="">`:''}
+              ${cover?`<img class="cover" src="${cover}" alt="" onerror="this.remove()">`:''}
             </div>`,
       iconSize:[34,34], iconAnchor:[17,34], popupAnchor:[0,-36]
     });
     const m = L.marker(tp(sp.lat, sp.lon), {icon:ic, riseOnHover:true}).addTo(map);
     m.bindPopup(popupHtml(sp), {maxWidth:300});
-    m.on('click', () => highlight(sp.sid));
+    m.on('click', () => { highlight(sp.sid); selectMarker(sp.sid); });
     markerBySid[sp.sid] = m;
   });
+  // 重建之后把"当前选中"的缩略图接回来（切换校区 / 改筛选都会走这里，
+  // 不接回来就会出现"选了但图没了"）。
+  selectMarker(selSid);
 }
 
 function popupHtml(sp){
@@ -865,6 +878,7 @@ function renderList(spots){
     const sp = spots.find(s=>s.sid===sid);
     if(!sp) return;
     map.flyTo(tp(sp.lat, sp.lon), Math.max(map.getZoom(), 18), {duration:.6});
+    selectMarker(sid);                       // 从列表点进来时，缩略图也要跟着出现
     const m = markerBySid[sid];
     if(m){ setTimeout(()=>m.openPopup(), 380); }
   }));
@@ -874,6 +888,18 @@ function highlight(sid){
   document.querySelectorAll('.card').forEach(x=>x.classList.toggle('sel', x.dataset.sid===sid));
   const c = document.querySelector(`.card[data-sid="${sid}"]`);
   if(c) c.scrollIntoView({block:'nearest', behavior:'smooth'});
+}
+
+/* 缩略图跟随"当前选中的那个序号"（用户 2026-10-05：默认只显示序号，点一下才出缩略图）。
+   为什么不用 CSS :hover：鼠标一扫过就出一堆图，比常显还乱；要的是"点选"这个明确动作。*/
+function selectMarker(sid){
+  selSid = sid || null;
+  document.querySelectorAll('.pinwrap.sel').forEach(w=>w.classList.remove('sel'));
+  if(!sid) return;
+  const m = markerBySid[sid];
+  const root = m && m.getElement();          // Leaflet 给的 divIcon 根元素
+  const w = root && root.querySelector('.pinwrap');
+  if(w) w.classList.add('sel');
 }
 
 /* ---------------- 控件 ---------------- */

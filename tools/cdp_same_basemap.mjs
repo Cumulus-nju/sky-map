@@ -109,6 +109,51 @@ record("★ 成品页底图与投稿选机位**是同一张图**（逐字节相�
 record("三个校区都带上了立体底图", Array.isArray(got.missing) && got.missing.length === 0,
   `缺：${JSON.stringify(got.missing)}`);
 
+// ============ 缩略图：序号右侧那张小图必须真的加载出来 ============
+// 用户 2026-10-05："打卡点地图上序号右侧有一条白色竖线，有点难看"。
+// 根因：内嵌这一版用了 `thumbs/xxx.jpg` **相对路径**，而在 `components.html` 的
+// iframe(srcdoc) 里它会相对 Streamlit 页面地址解析 ⇒ 404 ⇒ 只剩 `cover` 的
+// 2.5px 白边框渲染出来，看着就是一条白竖线。修法：内嵌版一律把照片内嵌成 data URL
+// （页面里也加了 onerror 兜底，图坏了直接移除、不留白框）。
+// 判据：① 没有"裂图"（naturalWidth 仍为 0 的）；② 张数 == 有照片的打卡点数；③ 全是 data URL。
+const covers = await inFrame(
+  "typeof w.eval('typeof DATA') === 'string' && w.eval('typeof DATA') === 'object'",
+  `(function(){
+  const imgs = Array.from(document.querySelectorAll('img.cover'));
+  const withPhoto = DATA.spots.filter(sp => (sp.shots || []).some(s => s.src)).length;
+  return {n: imgs.length, broken: imgs.filter(i => !i.naturalWidth).length,
+          relative: imgs.filter(i => !String(i.getAttribute('src') || '').startsWith('data:')).length,
+          withPhoto: withPhoto};
+})()`);
+console.log("缩略图:", JSON.stringify(covers));
+record("缩略图真的加载出来了（不再只剩白边框）",
+  !!(covers && covers.broken === 0 && covers.n === covers.withPhoto && covers.relative === 0),
+  JSON.stringify(covers));
+
+// ============ 缩略图的交互：默认不显示 → 点序号展开 → 点空白收起 ============
+// 用户 2026-10-05："我希望刚开始不显示缩略图，只有序号的标识，然后点一下序号才显示缩略图"。
+const coverTest = await inFrame(
+  "typeof w.eval('typeof DATA') === 'string' && w.eval('typeof DATA') === 'object'",
+  `(function(){
+  const shown = () => Array.from(document.querySelectorAll('img.cover'))
+      .filter(i => getComputedStyle(i).display !== 'none').length;
+  const out = {total: document.querySelectorAll('img.cover').length, init: shown()};
+  const icon = document.querySelector('.leaflet-marker-icon');
+  if (!icon) return Object.assign(out, {err: 'no marker icon'});
+  icon.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true}));
+  out.afterClick = shown();
+  out.selWraps = document.querySelectorAll('.pinwrap.sel').length;
+  const mapEl = document.getElementById('map');
+  mapEl.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true}));
+  out.afterMapClick = shown();
+  return out;
+})()`);
+console.log("缩略图交互:", JSON.stringify(coverTest));
+record("缩略图默认收起 / 点序号展开 / 点空白收起",
+  !!(coverTest && coverTest.init === 0 && coverTest.afterClick === 1
+     && coverTest.afterMapClick === 0),
+  JSON.stringify(coverTest));
+
 // 等地图铺好再截图（imageOverlay 是异步解码的）
 await sleep(4000);
 const shot = await send("Page.captureScreenshot", { format: "png" }, sid);
