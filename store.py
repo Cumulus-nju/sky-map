@@ -179,6 +179,23 @@ class LocalStore(Store):
         return f"本地文件存储（{self.root}）"
 
 
+class StoreHTTPError(RuntimeError):
+    """带**状态码与响应正文**的存储层错误（别退回 `r.raise_for_status()`）。
+
+    为什么自己包一层：线上报错时 Streamlit 会把原始异常信息**涂掉**
+    （只显示 "original error message is redacted to prevent data leaks"），
+    于是只剩 `requests.exceptions.HTTPError` 这个名字，根本看不出是
+    401（密钥/权限）、404（表没建）、413（照片太大）还是 429/5xx（配额/暂停）。
+    2026-10-05 就因为这个白查了一轮 —— 状态码才是真正的线索。
+    """
+
+    def __init__(self, status: int, body: str, path: str):
+        self.status = status
+        self.body = (body or "").strip()[:400]
+        self.path = path
+        super().__init__(f"HTTP {status} · {path} · {self.body[:200]}")
+
+
 # ---------------------------------------------------------------- Supabase 实现
 
 
@@ -230,10 +247,16 @@ class SupabaseStore(Store):
     def _rest(self, path: str) -> str:
         return f"{self.url}/rest/v1/{path}"
 
+    def _check(self, r, path: str) -> None:
+        """非 2xx 就抛**带状态码与正文**的错误（见 StoreHTTPError 的注释）。"""
+        if r.status_code < 400:
+            return
+        raise StoreHTTPError(r.status_code, r.text or "", path)
+
     def _get(self, path: str, params: dict | None = None) -> list:
         r = self._requests.get(self._rest(path), headers=self._headers(), params=params,
                                timeout=self.timeout)
-        r.raise_for_status()
+        self._check(r, path)
         return r.json() if r.text else []
 
     def _post(self, path: str, rows, *, upsert: bool = False) -> None:
@@ -242,12 +265,12 @@ class SupabaseStore(Store):
         r = self._requests.post(self._rest(path), headers=self._headers(extra),
                                 data=json.dumps(rows, ensure_ascii=False).encode("utf-8"),
                                 timeout=self.timeout)
-        r.raise_for_status()
+        self._check(r, path)
 
     def _delete(self, path: str, params: dict) -> None:
         r = self._requests.delete(self._rest(path), headers=self._headers(),
                                   params=params, timeout=self.timeout)
-        r.raise_for_status()
+        self._check(r, path)
 
     def ping(self) -> tuple[bool, str]:
         """连通性自检，部署时很有用。"""
@@ -256,6 +279,25 @@ class SupabaseStore(Store):
             return True, "Supabase 连接正常"
         except Exception as exc:
             return False, f"{type(exc).__name__}: {exc}"
+
+    def write_probe(self) -> tuple[bool, str]:
+        """**真写一小行再删掉**，用来诊断"读得通、写不进去"这种问题。
+
+        为什么光有 ping() 不够：读走的是 `submissions` 表、写照片走 `photos` 表，
+        两边的权限 / 体积 / 表结构都可能不同。2026-10-05 线上就是
+        "能读、能写投稿、**写照片报 HTTPError**"，只测读完全看不出来。
+        探针用一个固定的安全 id，失败时会带上状态码与响应正文。
+        """
+        try:
+            self._post(TABLE_PHOTOS, {"id": "__probe__", "mime": "text/plain",
+                                      "origin": "probe"}, upsert=True)
+        except Exception as exc:
+            return False, f"写 photos 表失败：{exc}"
+        try:
+            self._delete(TABLE_PHOTOS, {"id": "eq.__probe__"})
+        except Exception as exc:
+            return True, f"写入正常，但清理探针失败（无害）：{exc}"
+        return True, "写入正常（photos 表可写）"
 
     # ---- 投稿 ----
     def read_submissions(self) -> list:

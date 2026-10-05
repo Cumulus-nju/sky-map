@@ -210,6 +210,57 @@ def render_map_fallback(campus_key: str, picked: tuple[float, float] | None):
                      returned_objects=["last_clicked"])
 
 
+def report_save_failure(exc: Exception, upload) -> None:
+    """投稿落库失败：把**可诊断的信息**同时给到日志和用户。
+
+    为什么非做不可：线上出错时 Streamlit 会把原始异常信息涂掉，
+    用户只看到一句 `HTTPError`，分不清是
+    401（密钥/权限）、404（表没建）、413（照片太大）、429/5xx（配额/暂停）。
+    把状态码、云端返回片段、上传文件大小摆出来，一眼就能定位。
+    """
+    import traceback
+
+    status = getattr(exc, "status", None)
+    body = getattr(exc, "body", "") or ""
+    path = getattr(exc, "path", "") or ""
+    name, size_mb = getattr(upload, "name", "?"), None
+    try:                      # 量一下上传文件多大（顺便把游标归位）
+        upload.seek(0, 2)
+        size_mb = upload.tell() / 1048576
+        upload.seek(0)
+    except Exception:
+        pass
+
+    traceback.print_exc()     # 完整堆栈进 Manage app → Logs
+
+    st.error("**投稿没能保存。**（平台把原始报错涂掉了，下面是能拿到的信息）")
+    lines = [f"异常：{type(exc).__name__}: {exc}"]
+    if status:
+        lines.append(f"HTTP 状态码：{status}")
+    if path:
+        lines.append(f"接口：{path}")
+    if body:
+        lines.append(f"云端返回：{body}")
+    lines.append(f"上传文件：{name}" + (f" · {size_mb:.1f} MB" if size_mb else ""))
+    st.code("\n".join(lines), language="text")
+
+    hints = {
+        401: "Supabase 密钥不是 **service_role**（或 RLS 策略被动过）⇒ 去 Supabase → "
+             "Project Settings → API 复制 service_role key，更新 Streamlit secrets 的 "
+             "`SUPABASE_KEY` 后 Reboot。",
+        403: "同上：密钥权限不足 / RLS 没放开。",
+        404: "`photos` 表不存在 ⇒ 去 Supabase → SQL Editor 执行 `deploy/supabase_schema.sql`。",
+        409: "编号撞车（并发提交），再点一次提交即可。",
+        413: "**照片太大**，云端拒收这个请求体 ⇒ 换一张更小的图，或先把照片压到 5 MB 以内。",
+        429: "免费层请求配额用完，等一会儿再试。",
+        500: "云端内部错误。若上面显示上传文件很大，多半是**照片太大**（单张原图 base64 后"
+             "要进数据库 text 字段）⇒ 先用更小的图试一次；若小图也失败，就是库/配额问题。",
+        503: "Supabase 项目可能被**暂停**（免费层长期闲置）⇒ 去控制台 Restore 一下。",
+    }
+    st.info(hints.get(status, "可先换一张**更小的照片**重试；若仍失败，把上面这段文本发给维护者。"))
+    st.caption("完整堆栈已写进日志：Streamlit Cloud → 右下角 **Manage app** → Logs。")
+
+
 def main() -> None:
     S.nav(S.SUBMIT_PAGE)
 
@@ -411,6 +462,13 @@ def main() -> None:
                 )
                 subs.append(rec)
                 save_submissions(subs)
+            except Exception as exc:
+                # ⚠ 必须**捕获并自己报告**：线上抛异常时 Streamlit 会把原始信息涂掉
+                #   （只显示 "original error message is redacted"），用户只看到一句
+                #   `HTTPError`，看不出是密钥/权限/表不存在/照片太大/配额用完。
+                #   2026-10-05 提交投稿报 HTTPError 就是因为看不到状态码而卡住。
+                report_save_failure(exc, upload)
+                return
             finally:
                 release_lock()
 

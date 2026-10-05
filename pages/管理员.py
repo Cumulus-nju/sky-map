@@ -119,6 +119,34 @@ S.nav(S.ADMIN_PAGE)
 st.caption(f"🛠 构建版本 `{S.BUILD}`")
 S.storage_status()
 
+# 存储自检：**读得通不代表写得进**（读走 submissions、写照片走 photos，
+# 两边的权限/体积/表结构都可能不同）。2026-10-05 线上就是"能读、能写投稿、
+# 写照片报 HTTPError"，光看 ping 完全看不出来 —— 所以这里真写一小行再删掉，
+# 失败时把**状态码与云端返回**摆出来（平台上原始报错会被涂掉）。
+with st.expander("🔌 存储自检（读 + 写探针）"):
+    st.caption("排查'能看不能投'这类问题时先点这个。写入探针用的是固定安全 id，跑完会自动删掉。")
+    if st.button("运行自检", key="store_probe"):
+        try:
+            from store import get_store
+
+            obj = get_store()
+            ok_r, msg_r = obj.ping() if hasattr(obj, "ping") else (True, "本地存储，跳过")
+            st.write(("✅ " if ok_r else "❌ ") + f"读取：{msg_r}")
+            probe = getattr(obj, "write_probe", None)
+            if probe is None:
+                st.write("✅ 写入：本地文件存储，无需探针")
+            else:
+                ok_w, msg_w = probe()
+                st.write(("✅ " if ok_w else "❌ ") + f"写入：{msg_w}")
+                if not ok_w:
+                    st.warning(
+                        "写入失败时看上面的状态码：**401/403** = 密钥不是 service_role 或 RLS "
+                        "没放开；**404** = `photos` 表没建（执行 `deploy/supabase_schema.sql`）；"
+                        "**413/500 且照片很大** = 单张原图太大；**429/503** = 配额用完或项目被暂停。"
+                    )
+        except Exception as exc:  # 自检本身绝不能再把页面搞崩
+            st.error(f"自检自身出错：{type(exc).__name__}: {exc}")
+
 subs = load_submissions()
 pending = [s for s in subs if s.loc_verify or not s.has_point]
 
