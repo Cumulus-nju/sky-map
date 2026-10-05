@@ -134,9 +134,26 @@ try:
                                             landmarks={"北大楼": (32.05714, 118.77421)})
     check("HTML 生成成功且有高度", isinstance(doc, str) and h > 0, f"高度 {h:.0f}px")
     check("含 data URL 底图", "data:image/png;base64," in doc)
-    check("含右键选点", "addEventListener('contextmenu'" in doc)
+    check("含右键选点（桌面兜底，不进提示文案）", "addEventListener('contextmenu'" in doc)
     check("屏蔽了浏览器右键菜单", "ev.preventDefault()" in doc)
     check("左键才拖动（右键不进入拖动）", "if (ev.button === 2) return;" in doc)
+    # --- 双击选点（2026-10-05：手机没有右键，选点必须靠双击，机位还是必填）---
+    check("含双击选点判定", "const DBL_MS" in doc and "const DBL_PX" in doc)
+    check("选点只实现一处（双击与右键共用 doPick）",
+          doc.count("function doPick(") == 1 and doc.count("doPick(ev.clientX, ev.clientY);") == 2)
+    check("拖动会作废连击（拖完立刻点一下不算双击）", "tap.t = 0;" in doc)
+    check("双击不会选中文字", "user-select:none" in doc)
+    check("双击走 pointer 事件（桌面/触屏同一套逻辑）",
+          "performance.now()" in doc and "Math.hypot(ev.clientX - tap.x" in doc)
+    # --- 移动端适配（2026-10-05：手机必须能缩放 + 提示文案要对得上实现）---
+    check("含双指捏合缩放", "pinch" in doc and "Math.log2(d / pinch.d0)" in doc)
+    check("缩放锚点只实现一处（滚轮/双指/按钮共用）",
+          doc.count("function zoomAtPoint(") == 1 and doc.count("zoomAtPoint(") >= 4)
+    check("含以锚点为中心的换算 centerOn", doc.count("function centerOn(") == 1)
+    check("提示文案按设备给（手机不说滚轮）",
+          "pointer: coarse" in doc and "tipMobile" in doc and "双指" in doc)
+    check("窄屏按组件自身视口宽自适应（不猜侧边栏宽度）",
+          "const own = window.innerWidth" in doc and "pw - 170" not in doc)
     check("含查询参数回传", "searchParams.set('pick'" in doc)
     check("含视图状态回传（pnav）", "searchParams.set('pnav'" in doc)
     check("含滚轮缩放", "addEventListener('wheel'" in doc)
@@ -152,6 +169,25 @@ try:
     declared = set(_re.findall(r'id="([^"]+)"', doc))
     missing = sorted(used - declared)
     check("getElementById 用到的 id 都存在", not missing, f"缺失：{missing}")
+
+    # JS 语法自检：这段脚本是 Python f-string 拼出来的（JS 的 { } 必须写成 {{ }}），
+    # 漏一个括号 Python 侧完全不报错，但页面里**整块 <script> 直接不执行** ——
+    # 症状是"底图能看，可缩放/拖动/选点全都没反应"，且后端日志干干净净。
+    # 交给 node 真解析一遍，成本极低。
+    import subprocess as _sp, tempfile as _tf, os as _os
+    try:
+        _m = _re.search(r"<script>(.*?)</script>", doc, _re.S)
+        with _tf.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as _f:
+            _f.write(_m.group(1))
+            _js = _f.name
+        _p = _sp.run(["node", "--check", _js], capture_output=True, text=True)
+        _os.unlink(_js)
+        check("生成的 JS 语法通过 node --check", _p.returncode == 0,
+              (_p.stderr or "").strip().splitlines()[0] if _p.returncode else "")
+    except FileNotFoundError:
+        check("生成的 JS 语法通过 node --check", True, "本机无 node，跳过")
+    except Exception as _e:
+        check("生成的 JS 语法通过 node --check", False, f"{type(_e).__name__}: {_e}")
 except Exception as exc:
     check("组件 HTML 生成", False, f"{type(exc).__name__}: {exc}")
 

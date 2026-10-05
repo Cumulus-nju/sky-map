@@ -10,12 +10,22 @@
        经纬度 = fi.px_to_latlng(原图 x, 原图 y)
 
    因为窗口本身也是用同一套坐标算出来的，所以**任何缩放级下都严格对齐**。
-3. **交互映射（2026-10-02 按用户要求定的）**：
+3. **交互映射（2026-10-05 改版）**：
        滚轮 / 双指  = 缩放
        **左键按住**  = 拖动平移
-       **右键**      = 选点
-   为什么右键选点：左键要用来拖动，如果左键也选点，用户想拖动却总误选、
-   或者想选点却轻微移动就变成拖动 —— 拆开之后两个操作都干脆。
+       **双击**      = 选点（桌面双击 / 手机双击轻点，**同一套手势**）
+
+   为什么是"双击"，而不是"左键单击选点"、也不是"长按选点"：
+   拖动 = 按住 + **有位移**，双击 = 两次 **无位移** 的轻点，两者天然正交、互不误判。
+   而**长按**要跟拖动抢"同一根手指、同一个起点"，只能靠计时器 + 几像素的位移阈值
+   去猜，用户按下后稍一犹豫（尤其手机上）就会把平移变成选点 —— 用户 2026-10-05
+   明确否掉了长按方案（"长按选点可能和拖动冲突"）。
+
+   手机能选点这件事**靠的就是双击**：触屏没有右键，改成双击之前手机上根本选不了点，
+   而机位是**必填** ⇒ 等于手机用户交不了稿。
+
+   桌面右键选点**保留**（不写进提示文案，纯兜底）：右键永远不会被拖动占用，
+   留着零成本，也供现有 CDP 验证脚本（`tools/cdp_snap_click.mjs` 等）继续使用。
 4. **宽度自适应**：Streamlit 的 `components.html` 只收整数宽度，写死会在窄屏被裁。
    所以组件自己监听父窗口尺寸，把 `#frame` 的宽度设成父容器宽度（并夹住上下限），
    顺带把 iframe 高度也调好（否则下方会留一大块空白）。
@@ -135,7 +145,8 @@ def build_picker_html(
     nav: tuple[float, float, int] | None = None,
     landmarks: dict[str, tuple[float, float]] | None = None,
     max_display_height: float = 980.0,
-    tip: str = "滚轮缩放 · 左键按住拖动 · 右键选点",
+    tip: str = "滚轮缩放 · 左键按住拖动 · 双击选点",
+    tip_mobile: str = "双指缩放 · 单指拖动 · 双击选点",
     roofs: dict | None = None,
 ) -> tuple[str, float]:
     """生成点选组件的 HTML，返回 (html, 建议组件高度)。
@@ -185,6 +196,7 @@ def build_picker_html(
         "outW": base_w, "outH": base_h,
         "nwLat": nw_lat, "nwLon": nw_lon, "seLat": se_lat, "seLon": se_lon,
         "marks": marks, "pick": pick_px, "campus": campus_key,
+        "tip": tip, "tipMobile": tip_mobile,
         "initLat": n_lat, "initLon": n_lon, "initZoom": n_z,
         "maxZoom": MAX_ZOOM, "minW": MIN_W, "maxW": MAX_W, "maxH": max_display_height,
         "roofs": roofs or None,
@@ -198,7 +210,11 @@ def build_picker_html(
                font:13px/1.5 system-ui,-apple-system,"Microsoft YaHei",sans-serif; }}
   #frame {{ position:relative; width:{base_w:.0f}px; height:{base_h:.0f}px;
             border:1px solid #cfd6dd; border-radius:6px; overflow:hidden;
-            background:#e9ecef; cursor:grab; touch-action:none; }}
+            background:#e9ecef; cursor:grab; touch-action:none;
+            /* 双击现在是选点手势 ⇒ 必须禁掉双击选中文字 / iOS 长按弹出菜单，
+               否则双击会顺手把「提示」那行字选蓝，看起来像选点失败了。
+               touch-action:none 同时也挡掉了浏览器的"双击放大页面"。*/
+            user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }}
   #frame.drag {{ cursor:grabbing; }}
   #stage {{ position:absolute; left:0; top:0; transform-origin:0 0; }}
   #base {{ display:block; user-select:none; -webkit-user-drag:none; }}
@@ -236,6 +252,17 @@ const stage = document.getElementById('stage');
 const img = document.getElementById('base');
 const zin = document.getElementById('zin'), zout = document.getElementById('zout');
 const pin = document.getElementById('pick');
+const hint = document.getElementById('hint');
+
+// 提示文案**按设备给**：手机没有滚轮，桌面没有"双指"。
+// 判据用 `pointer: coarse`（主要指针是"粗"的 = 手指），**不用** maxTouchPoints ——
+// 带触摸屏的笔记本 maxTouchPoints 也 > 0，但它主要用鼠标，提示"双指"反而把人带偏。
+// （桌面同学看到的仍是"滚轮/左键"那套，用户确认过的桌面习惯不变。）
+// ⚠ 必须与实现一致：提示里写的手势，代码里就得有 —— "双指"曾经只是写在提示里、
+//   根本没实现（2026-10-04 发现），这种文案比不写还坏。
+const COARSE = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+if (COARSE && D.tipMobile) hint.textContent = D.tipMobile;
+hint.dataset.tip = hint.textContent;
 
 let zoom = D.initZoom;          // 缩放级
 let cx = null, cy = null;       // 视图中心（原图像素）
@@ -341,9 +368,19 @@ function screenToImg(clientX, clientY) {{
 function fitToParent() {{
   let availW = D.outW, availH = D.maxH;
   try {{
-    const pw = window.parent ? window.parent.innerWidth : 0;
+    // 可用宽 = **组件自己的视口宽**。Streamlit 用 width="stretch" 把这个 iframe
+    // 拉满它分配到的空间，所以 window.innerWidth 就是"有多少宽度可用"的准确答案。
+    //
+    // 为什么不再用 `parent.innerWidth - 170`（老写法）：170 是**猜的侧边栏宽度**。
+    // 手机上侧边栏是收起的（site_common: initial_sidebar_state="auto"），
+    // 再减 170 等于白白把地图压窄一截（实测 390px 的屏少用 38px）；
+    // 而如果按"收起了就不减"改成减 24，又会算出比容器还宽的值、右侧被裁。
+    // 直接用自身视口宽，两种屏幕都不用猜。
+    const own = window.innerWidth;
+    // 下限只做"别离谱"的兜底（120）：**不能**再夹回 MIN_W(320) ——
+    // 窄屏手机可能比 320 还窄，硬夹会让地图比容器宽、右边被裁掉。
+    if (own) availW = Math.min(D.maxW, Math.max(120, own - 2));
     const ph = window.parent ? window.parent.innerHeight : 0;
-    if (pw) availW = Math.min(D.maxW, Math.max(D.minW, pw - 170));
     if (ph) availH = Math.min(D.maxH, Math.max(320, ph - 90));
   }} catch (e) {{}}
   // 按框的比例等比缩放到可用区域内（宽高用同一个 k）
@@ -363,43 +400,114 @@ function fitToParent() {{
 window.addEventListener('resize', fitToParent);
 
 // ---------------- 交互 ----------------
-// 滚轮 = 缩放（以鼠标位置为锚）
+// 滚轮 = 缩放（以鼠标位置为锚）。锚点算法在 zoomAtPoint 里，与双指捏合共用。
 frame.addEventListener('wheel', function (ev) {{
   ev.preventDefault();
-  const before = screenToImg(ev.clientX, ev.clientY);
-  const w = winW(), h = winH();
-  const fracX = (before[0] - (cx - w / 2)) / w, fracY = (before[1] - (cy - h / 2)) / h;
-  const nz = Math.max(0, Math.min(D.maxZoom, zoom + (ev.deltaY < 0 ? 1 : -1)));
-  if (nz === zoom) return;
-  zoom = nz;
-  const nw = winW(), nh = winH();
-  cx = before[0] + (0.5 - fracX) * nw;
-  cy = before[1] + (0.5 - fracY) * nh;
-  render(); report(false);
+  if (zoomAtPoint(zoom + (ev.deltaY < 0 ? 1 : -1), ev.clientX, ev.clientY)) report(false);
 }}, {{ passive: false }});
 
-// 左键按住拖动 = 平移；右键 = 选点
+// ---------------- 缩放锚点：把某个屏幕点上看到的地物"钉住" ----------------
+// 滚轮、双指捏合、缩放按钮**共用这一套**。
+// 为什么非要共用：各写一遍必然漂移，症状是"滚轮缩放是对的、双指一捏位置就跑了"，
+// 而且两边都不报错。
+function centerOn(p, clientX, clientY) {{
+  const r = frame.getBoundingClientRect();
+  const w = winW(), h = winH(), scale = vw() / w;
+  cx = p[0] + w / 2 - (clientX - r.left) / scale;
+  cy = p[1] + h / 2 - (clientY - r.top) / scale;
+  clampCenter();
+}}
+function zoomAtPoint(nz, clientX, clientY) {{
+  nz = Math.max(0, Math.min(D.maxZoom, nz));
+  if (nz === zoom) return false;
+  const before = screenToImg(clientX, clientY);   // 缩放前，这个屏幕点下面是哪个地物
+  zoom = nz;
+  centerOn(before, clientX, clientY);             // 缩放后让它还落在同一个屏幕点
+  render();
+  return true;
+}}
+
+// ---------------- 拖动 / 双指捏合 / 双击，都走 pointer 事件 ----------------
+// 鼠标和手指派的都是 pointer 事件 ⇒ **一套处理**就够（不必再写一份 touch 分支）。
+// 用 `ptrs` 记住当前按下的每个 pointer，才能分辨"一指 = 拖动/双击"与"两指 = 捏合"。
 //
-// ⚠ 位移用"钳位后的实际位移"来算，不能直接用鼠标位移：
-//   视图贴到边界时 clampCenter() 会吃掉一部分位移，若仍按鼠标全量移动，
+// ⚠ 位移用"钳位后的实际位移"来算，不能直接用指针位移：
+//   视图贴到边界时 clampCenter() 会吃掉一部分位移，若仍按指针全量移动，
 //   图像就会与光标"脱手"（拖着拖着光标和地图对不上）。
 //   注意 z=0 时窗口 == 整图，本来就无处可移（钳位全吃掉）—— 那是**正确行为**，
 //   不是 bug：想平移请先放大。
+const ptrs = new Map();                 // pointerId -> {{x, y}}（当前按下的所有指针）
 let drag = null;
+let pinch = null;                       // {{d0, z0, mid, dirty}}
+
+// **双击 / 双击轻点 = 选点**（见文件头"交互映射"）
+//
+// 为什么不用浏览器自带的 `dblclick` 事件：触屏上 `dblclick` 各浏览器行为不一
+// （不少手机根本不派发），而 `pointerdown/pointerup` 鼠标和手指走的是同一套 ——
+// 自己数"两次无位移的轻点"最稳，桌面手机一份逻辑。
+//
+// 与拖动为什么不会打架：拖动一定会先 `moved`（位移 >3px）⇒ 直接作废连击计数；
+// 双击则两次都没有位移。两者互斥，不需要计时器去猜"用户是想拖还是想选"。
+const DBL_MS = 350;   // 两次轻点的最大间隔
+const DBL_PX = 28;    // 两次轻点的最大偏移（手指比鼠标抖，给宽一点）
+let tap = {{ t: 0, x: 0, y: 0 }};
+
+function twoPts() {{
+  const a = [];
+  for (const p of ptrs.values()) a.push(p);
+  return a;
+}}
+function distOf(a, b) {{ return Math.hypot(a[0] - b[0], a[1] - b[1]); }}
+
 frame.addEventListener('pointerdown', function (ev) {{
   if (ev.button === 2) return;            // 右键交给 contextmenu 处理
   if (ev.button !== 0) return;
-  drag = {{ x: ev.clientX, y: ev.clientY, cx: cx, cy: cy, moved: false }};
-  frame.classList.add('drag');
+  ptrs.set(ev.pointerId, {{ x: ev.clientX, y: ev.clientY }});
   try {{ frame.setPointerCapture(ev.pointerId); }} catch (e) {{}}
+  if (ptrs.size === 1) {{
+    drag = {{ x: ev.clientX, y: ev.clientY, cx: cx, cy: cy, moved: false }};
+    frame.classList.add('drag');
+  }} else if (ptrs.size === 2) {{
+    // 第二根手指落下 = 要捏合 ⇒ 取消拖动与连击
+    // （不取消的话，两指操作结束时会被当成"拖动"回传，甚至凑巧算成一次选点）
+    drag = null;
+    frame.classList.remove('drag');
+    tap.t = 0;
+    const q = twoPts();
+    const a = [q[0].x, q[0].y], b = [q[1].x, q[1].y];
+    pinch = {{ d0: distOf(a, b), z0: zoom,
+              mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], dirty: false }};
+  }}
 }});
+
 frame.addEventListener('pointermove', function (ev) {{
+  if (ptrs.has(ev.pointerId)) ptrs.set(ev.pointerId, {{ x: ev.clientX, y: ev.clientY }});
+
+  // 两指：捏合缩放 + 跟着两指中点平移（手机的主用缩放方式）
+  if (pinch && ptrs.size >= 2) {{
+    const q = twoPts();
+    const a = [q[0].x, q[0].y], b = [q[1].x, q[1].y];
+    const d = distOf(a, b), m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    // 手指间距每翻一倍 = 变一级。底图缩放级是**整数**（0/1/2，上限见 MAX_ZOOM）：
+    // 不做连续缩放，一是底图过 4× 就是马赛克、二是 zoom 会写进 pnav，
+    // 整数级才能保证 rerun 之后视图一模一样地恢复。
+    const step = pinch.d0 > 8 ? Math.round(Math.log2(d / pinch.d0)) : 0;
+    const nz = Math.max(0, Math.min(D.maxZoom, pinch.z0 + step));
+    const anchor = screenToImg(pinch.mid[0], pinch.mid[1]);   // 旧中点下面是哪个地物
+    zoom = nz;
+    centerOn(anchor, m[0], m[1]);                             // 把它挪到新中点
+    pinch.mid = m;
+    pinch.dirty = true;
+    render();
+    return;
+  }}
+
   if (!drag) return;
   const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
   if (!drag.moved && Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
   if (!drag.moved) return;
   const scale = vw() / winW();
-  const wantX = drag.cx - dx / scale;      // 按鼠标位移的目标中心
+  const wantX = drag.cx - dx / scale;      // 按指针位移的目标中心
   const wantY = drag.cy - dy / scale;
   cx = wantX; cy = wantY;
   clampCenter();                            // 边界处会被夹住
@@ -408,32 +516,61 @@ frame.addEventListener('pointermove', function (ev) {{
   drag.cy += (cy - wantY);
   render();
 }});
+
 frame.addEventListener('pointerup', function (ev) {{
-  if (!drag) return;
+  const wasPinch = !!pinch;
+  ptrs.delete(ev.pointerId);
+  if (pinch && ptrs.size < 2) {{
+    // 捏合**结束时才回传**：中间过程每帧都 report 会触发一串 Streamlit rerun，
+    // 手机上直接卡成幻灯片。
+    const dirty = pinch.dirty;
+    pinch = null;
+    if (dirty) report(false);
+  }}
+  if (wasPinch || !drag) return;          // 捏合/右键：不参与拖动与双击
   const moved = drag.moved; drag = null;
   frame.classList.remove('drag');
-  if (moved) report(false);
+  if (moved) {{
+    tap.t = 0;                            // 拖动过 -> 作废上一次轻点，避免"拖完再点"被误判成双击
+    report(false);
+    return;
+  }}
+  const now = performance.now();
+  if (now - tap.t <= DBL_MS && Math.hypot(ev.clientX - tap.x, ev.clientY - tap.y) <= DBL_PX) {{
+    tap.t = 0;                            // 用掉这次连击，避免"点三下"被算成两次双击
+    doPick(ev.clientX, ev.clientY);
+  }} else {{
+    tap.t = now; tap.x = ev.clientX; tap.y = ev.clientY;
+  }}
 }});
-frame.addEventListener('pointercancel', function () {{
+frame.addEventListener('pointercancel', function (ev) {{
+  ptrs.delete(ev.pointerId);
+  if (ptrs.size < 2) pinch = null;
   drag = null; frame.classList.remove('drag');
 }});
 
-// 右键选点（必须屏蔽浏览器右键菜单，否则弹菜单把操作打断）
-frame.addEventListener('contextmenu', function (ev) {{
-  ev.preventDefault();
-  const raw = screenToImg(ev.clientX, ev.clientY);
+// 选点只此一处实现：双击（桌面/手机）与右键（桌面兜底）都走它，
+// 免得两条路径各写一遍吸附+落针+回传，改一处漏一处。
+function doPick(clientX, clientY) {{
+  const raw = screenToImg(clientX, clientY);
   const p = snapToFootprint(raw[0], raw[1]);      // 点到屋顶 -> 贴回楼基
   pin.dataset.ix = p[0]; pin.dataset.iy = p[1]; pin.classList.add('on');
   const ll = imgPxToLatLng(p[0], p[1]);
   render();
   flashSnap(raw, p);
   report(true, ll[0], ll[1]);
+}}
+
+// 桌面右键选点（兜底，不进提示文案）。
+// 必须屏蔽浏览器右键菜单，否则弹菜单把操作打断。
+frame.addEventListener('contextmenu', function (ev) {{
+  ev.preventDefault();
+  doPick(ev.clientX, ev.clientY);
 }});
 
 // 吸附发生时给一句提示 —— 否则同学会奇怪"我点的位置怎么自己变了"
 let snapTimer = null;
 function flashSnap(raw, p) {{
-  const hint = document.getElementById('hint');
   if (!hint) return;
   if (hint.dataset.tip === undefined) hint.dataset.tip = hint.textContent;
   const moved = Math.hypot(p[0] - raw[0], p[1] - raw[1]) > 0.5;
@@ -442,8 +579,15 @@ function flashSnap(raw, p) {{
   snapTimer = setTimeout(function () {{ hint.textContent = hint.dataset.tip; }}, 2600);
 }}
 
-zin.addEventListener('click', function () {{ zoom = Math.min(D.maxZoom, zoom + 1); render(); report(false); }});
-zout.addEventListener('click', function () {{ zoom = Math.max(0, zoom - 1); render(); report(false); }});
+// 缩放按钮：以**视图中心**为锚（等于视图中心不动），手机上的兜底缩放方式
+zin.addEventListener('click', function () {{
+  const r = frame.getBoundingClientRect();
+  if (zoomAtPoint(zoom + 1, r.left + vw() / 2, r.top + vh() / 2)) report(false);
+}});
+zout.addEventListener('click', function () {{
+  const r = frame.getBoundingClientRect();
+  if (zoomAtPoint(zoom - 1, r.left + vw() / 2, r.top + vh() / 2)) report(false);
+}});
 
 img.onload = function () {{
   for (const m of D.marks) {{

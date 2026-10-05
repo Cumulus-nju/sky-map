@@ -47,7 +47,13 @@ def setup(page_title: str, icon: str = "🌤") -> None:
         page_title=f"{page_title} · {SITE}",
         page_icon=icon,
         layout="wide",
-        initial_sidebar_state="expanded",
+        # ⚠ 必须用 "auto"，**不能写死 "expanded"**（2026-10-05 移动端适配时改的）。
+        # 写死 expanded 的后果：手机上（390px 宽）侧边栏照样展开占 300px，
+        # 把地图挤成右边一条窄缝 —— 更糟的是侧边栏**盖在地图上面**
+        # （stSidebar 的 z-index 是 999991），触点全被它接走，
+        # 同学连着双击几次都不会有反应，也看不出为什么。
+        # "auto" = 窗口够宽就展开（桌面观感不变）、窄就自动收起（手机让位给地图）。
+        initial_sidebar_state="auto",
     )
 
 
