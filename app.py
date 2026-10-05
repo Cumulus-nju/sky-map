@@ -231,96 +231,107 @@ def main() -> None:
         st.metric("已收稿", f"{len(existing)} 幅")
 
     # ---------------- 第一步：选校区与机位 ----------------
-    st.subheader("① 选择校区并在图上点出机位")
-    key_labels = {k: c.name for k, c in CAMPUSES.items()}
-    campus_key = st.radio(
-        "校区", list(CAMPUSES), format_func=lambda k: key_labels[k], horizontal=True, key="campus_key"
-    )
-    # ⚠ 操作说明必须写全、且必须与实现一致，**而且要按设备分开写**：
-    #   电脑 = **右键单击**选点（用户 2026-10-05 明确"电脑端和以前一样是右键单击"），
-    #   手机 = **双击轻点**（触屏没有右键，而机位是必填 ⇒ 不给手机手势就交不了稿）。
-    #   只写一种必然误导另一半人：电脑同学照着手机会去双击，手机同学找不到右键。
-    st.caption(
-        "在地图上**右键单击**（手机上**双击轻点**）你拍照站的位置（越准越好，**必填**）；"
-        "点错了再选一次就会覆盖。"
-        "　操作：**滚轮 / 双指** 缩放 · **按住** 拖动 · **右键 / 双击轻点** 选点"
-    )
+    # 排版（2026-10-05 用户要求"保持现有文字/结构，优化排版"）：
+    # 三步各放进一个**带边框的卡片**，让"①②③"在页面上真的是三块，
+    # 而不是从标题一路平铺到底；文字、字段、逻辑一个字没动，只改视觉分组。
+    with st.container(border=True):
+        st.subheader("① 选择校区并在图上点出机位")
+        key_labels = {k: c.name for k, c in CAMPUSES.items()}
+        campus_key = st.radio(
+            "校区", list(CAMPUSES), format_func=lambda k: key_labels[k], horizontal=True, key="campus_key"
+        )
+        # ⚠ 操作说明必须写全、且必须与实现一致，**而且要按设备分开写**：
+        #   电脑 = **右键单击**选点（用户 2026-10-05 明确"电脑端和以前一样是右键单击"），
+        #   手机 = **双击轻点**（触屏没有右键，而机位是必填 ⇒ 不给手机手势就交不了稿）。
+        #   只写一种必然误导另一半人：电脑同学照着手机会去双击，手机同学找不到右键。
+        st.caption(
+            "在地图上**右键单击**（手机上**双击轻点**）你拍照站的位置（越准越好，**必填**）；"
+            "点错了再选一次就会覆盖。"
+            "　操作：**滚轮 / 双指** 缩放 · **按住** 拖动 · **右键 / 双击轻点** 选点"
+        )
 
-    state_key = f"picked_{campus_key}"
-    picked = st.session_state.get(state_key)
+        state_key = f"picked_{campus_key}"
+        picked = st.session_state.get(state_key)
 
-    # 静态底图上的点选：组件把坐标写进 URL 查询参数，这里读走并落到 session_state。
-    # 为什么用查询参数中转：st_folium 的 last_clicked 在静态图方案里没有了，
-    # 而 components 组件没有返回值通道，查询参数是最省事且可靠的桥。
-    from_pick = S.take_pick()
-    if from_pick and from_pick != picked:
-        st.session_state[state_key] = from_pick
-        picked = from_pick
+        # 静态底图上的点选：组件把坐标写进 URL 查询参数，这里读走并落到 session_state。
+        # 为什么用查询参数中转：st_folium 的 last_clicked 在静态图方案里没有了，
+        # 而 components 组件没有返回值通道，查询参数是最省事且可靠的桥。
+        from_pick = S.take_pick()
+        if from_pick and from_pick != picked:
+            st.session_state[state_key] = from_pick
+            picked = from_pick
 
-    clicked = render_picker(campus_key, picked)
-    # 兜底分支（在线地图）仍走 last_clicked
-    if clicked and isinstance(clicked, dict) and clicked.get("last_clicked"):
-        lc = clicked["last_clicked"]
-        newpt = (round(lc["lat"], 6), round(lc["lng"], 6))
-        if newpt != picked:
-            st.session_state[state_key] = newpt
-            st.rerun()
+        clicked = render_picker(campus_key, picked)
+        # 兜底分支（在线地图）仍走 last_clicked
+        if clicked and isinstance(clicked, dict) and clicked.get("last_clicked"):
+            lc = clicked["last_clicked"]
+            newpt = (round(lc["lat"], 6), round(lc["lng"], 6))
+            if newpt != picked:
+                st.session_state[state_key] = newpt
+                st.rerun()
 
-    # 「位置描述」直接放在**地图正下方通栏**。
-    # ⚠ 原来是 `st.columns([1, 1])`：左边放"已选机位"、右边放这个输入框，
-    # 于是输入框只占右半边、看着"偏"（用户 2026-10-04 反馈"现在偏着很奇怪"）。
-    picked = st.session_state.get(state_key)
-    if picked:
-        st.success(f"已选机位：{picked[0]:.6f}, {picked[1]:.6f}")
-    loc_text = st.text_input(
-        "位置描述（可选，供人工校对）",
-        placeholder="例：北大楼前草坪、图书馆南侧台阶、操场看台…",
-    )
+        # 「位置描述」直接放在**地图正下方通栏**。
+        # ⚠ 原来是 `st.columns([1, 1])`：左边放"已选机位"、右边放这个输入框，
+        # 于是输入框只占右半边、看着"偏"（用户 2026-10-04 反馈"现在偏着很奇怪"）。
+        picked = st.session_state.get(state_key)
+        if picked:
+            st.success(f"已选机位：{picked[0]:.6f}, {picked[1]:.6f}")
+        loc_text = st.text_input(
+            "位置描述（可选，供人工校对）",
+            placeholder="例：北大楼前草坪、图书馆南侧台阶、操场看台…",
+        )
 
     # ---------------- 第二步：上传照片 ----------------
-    st.subheader("② 上传作品")
-    upload = st.file_uploader("选择照片", type=["jpg", "jpeg", "png", "heic", "webp", "tif", "tiff"])
+    with st.container(border=True):
+        st.subheader("② 上传作品")
+        upload = st.file_uploader("选择照片", type=["jpg", "jpeg", "png", "heic", "webp", "tif", "tiff"])
 
-    exif: dict = {}
-    if upload is not None:
-        upload.seek(0)
-        exif = read_exif(upload)
-        upload.seek(0)
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            st.image(upload, caption="投稿预览", use_container_width=True)
-        with c2:
-            if exif.get("has_gps"):
-                st.info(f"📡 从 EXIF 读到定位：{exif['lat']:.6f}, {exif['lon']:.6f}")
-            else:
-                st.caption("照片里没有可用的 GPS 信息（微信传输过通常会丢失），以上面点选的机位为准。")
-            if exif.get("shot_time"):
-                st.write(f"🕒 拍摄时间：{exif['shot_time']}")
-            if exif.get("camera"):
-                st.write(f"📷 器材：{exif['camera']}")
+        exif: dict = {}
+        if upload is not None:
+            upload.seek(0)
+            exif = read_exif(upload)
+            upload.seek(0)
+            # 预览列略宽于信息列：竖幅照片在窄列里会被压得很小
+            c1, c2 = st.columns([1.15, 1])
+            with c1:
+                st.image(upload, caption="投稿预览", use_container_width=True)
+            with c2:
+                if exif.get("has_gps"):
+                    st.info(f"📡 从 EXIF 读到定位：{exif['lat']:.6f}, {exif['lon']:.6f}")
+                else:
+                    st.caption("照片里没有可用的 GPS 信息（微信传输过通常会丢失），以上面点选的机位为准。")
+                if exif.get("shot_time"):
+                    st.write(f"🕒 拍摄时间：{exif['shot_time']}")
+                if exif.get("camera"):
+                    st.write(f"📷 器材：{exif['camera']}")
 
     # ---------------- 第三步：作品信息 ----------------
-    st.subheader("③ 作品信息")
-    f1, f2 = st.columns(2)
-    with f1:
-        title = st.text_input("作品名 *", placeholder="例：梧桐缝里的晚霞")
-        author = st.text_input("姓名 / 昵称 *")
-        shot_time = st.text_input(
-            "拍摄时间", value=parse_shot_time(exif.get("shot_time", "")) if exif else "",
-            placeholder="2026-10-20 17:40",
-        )
-    with f2:
-        contact = st.text_input("联系方式（学号 / 微信 / 邮箱）", help="仅用于发放奖品与版权确认，不公开")
-        weather = st.text_input("天气现象（可选）", placeholder="例：晚霞 / 火烧云")
-        weather_detail = st.text_input("天象细节（可选）", placeholder="例：高积云 + 落日侧光，地平线有层积云")
+    with st.container(border=True):
+        st.subheader("③ 作品信息")
+        f1, f2 = st.columns(2)
+        with f1:
+            title = st.text_input("作品名 *", placeholder="例：梧桐缝里的晚霞")
+            author = st.text_input("姓名 / 昵称 *")
+            shot_time = st.text_input(
+                "拍摄时间", value=parse_shot_time(exif.get("shot_time", "")) if exif else "",
+                placeholder="2026-10-20 17:40",
+            )
+        with f2:
+            contact = st.text_input("联系方式（学号 / 微信 / 邮箱）", help="仅用于发放奖品与版权确认，不公开")
+            weather = st.text_input("天气现象（可选）", placeholder="例：晚霞 / 火烧云")
+            weather_detail = st.text_input("天象细节（可选）", placeholder="例：高积云 + 落日侧光，地平线有层积云")
 
-    note = st.text_area("拍摄手记 / 机位提示（会展示在地图上）", height=90,
-                        placeholder="例：站在台阶第三级，广角端贴近地面仰拍，等太阳落到楼后 5 分钟出现火烧云")
-
-    agree = st.checkbox("我确认作品为本人原创，并授权主办方用于打卡点地图与宣传展示 *")
+        note = st.text_area("拍摄手记 / 机位提示（会展示在地图上）", height=90,
+                            placeholder="例：站在台阶第三级，广角端贴近地面仰拍，等太阳落到楼后 5 分钟出现火烧云")
 
     # ---------------- 提交 ----------------
-    if st.button("🚀 提交投稿", type="primary", use_container_width=True):
+    # 勾选与按钮单独一张卡片：它们是"最后一步"，视觉上和上面三段信息分开，
+    # 又不用新增任何标题文字。按钮的返回值先接住，处理逻辑仍在卡片外面（缩进不变）。
+    with st.container(border=True):
+        agree = st.checkbox("我确认作品为本人原创，并授权主办方用于打卡点地图与宣传展示 *")
+        submit = st.button("🚀 提交投稿", type="primary", use_container_width=True)
+
+    if submit:
         picked = st.session_state.get(state_key)   # 先取出来，下面的必填校验要用
         problems = []
         if not title.strip():
