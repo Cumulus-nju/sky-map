@@ -400,12 +400,14 @@ body.embed #campusFloat{display:flex}
    框外看起来就是一圈"留白"，和选机位那页的观感一致。 */
 #map.relief{background:#e9ecef}
 .leaflet-popup-content-wrapper{border-radius:12px;padding:0;overflow:hidden;box-shadow:0 8px 30px rgba(10,20,40,.28)}
-/* ⚠ 高度必须封顶：一个打卡点可能有好几幅作品，全堆出来的话弹窗能到 1000+ px，
-   比地图容器还高 ⇒ 超出框框看不到（用户 2026-10-05 反馈）。
-   新设计是"一次只展示一幅 + 缩略图条切换"，弹窗自然就矮；
-   这里再留一道**兜底**：万一文字特别长（手记很长），内部滚动而不是撑破。 */
-.leaflet-popup-content{margin:0;width:268px;max-height:min(68vh,470px);overflow:auto}
-.pop .pmain{width:100%;display:block;background:#e5eaf0;max-height:172px;object-fit:cover}
+/* ⚠ 高度必须封顶，而且要封得**够矮**：一个打卡点可能有好几幅作品，
+   老做法全堆出来能到 1100px；即便改成"一次一幅"，实测仍有 449px ——
+   而序号落在中间时上下各只有 ~410px，**两边都装不下**，
+   翻到下面也一样被裁（实测 top 仍 -77px）。
+   封到 330px 以后，820px 高的地图上"必有一侧装得下"。
+   多出来的文字在弹窗内滚动，不撑破。 */
+.leaflet-popup-content{margin:0;width:268px;max-height:min(58vh,330px);overflow:auto}
+.pop .pmain{width:100%;display:block;background:#e5eaf0;max-height:150px;object-fit:cover}
 .pop .pnav{
   display:flex;align-items:center;justify-content:space-between;gap:6px;padding:5px 9px;
   font-size:11px;color:var(--muted);background:#f7f9fc;border-top:1px solid var(--line);
@@ -420,6 +422,11 @@ body.embed #campusFloat{display:flex}
   border:2px solid transparent;background:#e5eaf0;
 }
 .pop .pthumbs img.on{border-color:var(--accent)}
+/* 上方装不下时，弹窗会被翻到序号**下面**（`.pop-below`，由 onPopupOpen 判定）——
+   那时小尖角要跟着翻过来朝上，否则尖角指向下方看着像"插错了地方"。
+   Leaflet 的 popup 没有内置翻转，只能自己改这两条。 */
+.leaflet-popup.pop-below .leaflet-popup-tip-container{top:-19px;bottom:auto}
+.leaflet-popup.pop-below .leaflet-popup-tip{margin:12px auto 0}
 .pop img{width:100%;display:block;background:#e5eaf0;max-height:230px;object-fit:cover}
 .pop .pb{padding:10px 12px 12px}
 .pop h3{font-size:14px;margin-bottom:2px;line-height:1.35}
@@ -540,8 +547,8 @@ function initMap(){
   map = L.map('map', {zoomControl:true, minZoom:3, maxZoom:19, preferCanvas:false})
           .setView(c.center, c.zoom);
   L.control.scale({imperial:false, position:'bottomleft'}).addTo(map);
-  // 弹窗要完整落在视野里（见 keepPopupInView 的注释）
-  map.on('popupopen', (e) => keepPopupInView(e.popup));
+  // 弹窗打开时：① 决定要不要翻到序号下面 ② 保证完整落在视野里（见两个函数的注释）
+  map.on('popupopen', (e) => onPopupOpen(e.popup));
   applyFrame('gulou');
   buildVectorLayer();
   applyHash();
@@ -825,13 +832,13 @@ function shotPanel(sp, idx){
   const withPic = shots.map((t, k) => [t, k]).filter(([t]) => t.src);
   const thumbs = (many && withPic.length > 1) ? `<div class="pthumbs">` + withPic.map(([t, k]) =>
       `<img src="${t.src}" alt="" class="${k === i ? 'on' : ''}"
-            data-sid="${esc(sp.sid)}" data-i="${k}" onclick="showShot(this)">`).join('') + `</div>` : '';
+            data-sid="${esc(sp.sid)}" data-i="${k}" onclick="showShot(event, this)">`).join('') + `</div>` : '';
   const nav = many ? `<div class="pnav">
       <button data-sid="${esc(sp.sid)}" data-i="${(i - 1 + shots.length) % shots.length}"
-              onclick="showShot(this)" title="上一幅">‹</button>
+              onclick="showShot(event, this)" title="上一幅">‹</button>
       <span>第 ${i + 1} / ${shots.length} 幅${s.award ? ` · <b style="color:var(--accent)">${esc(s.award)}</b>` : ''}</span>
       <button data-sid="${esc(sp.sid)}" data-i="${(i + 1) % shots.length}"
-              onclick="showShot(this)" title="下一幅">›</button>
+              onclick="showShot(event, this)" title="下一幅">›</button>
     </div>` : (s.award ? `<div class="pnav"><span><b style="color:var(--accent)">${esc(s.award)}</b></span></div>` : '');
 
   return `<div class="pop">
@@ -856,34 +863,82 @@ function shotPanel(sp, idx){
 }
 
 /* 切换当前展示的作品（缩略图 / 上下一幅都走它）。
-   用 `setPopupContent` 原地换内容，**弹窗不会跳位置**，也不会闪。 */
-function showShot(el){
+   用 `setPopupContent` 原地换内容，**弹窗不会跳位置、也不会关**。
+   ⚠ 必须 `stopPropagation`：否则这次点击会冒泡到地图，触发 Leaflet 默认的
+   "点地图关弹窗"，于是"点缩略图换图"变成"把弹窗关掉"（用户 2026-10-05 报的）。
+   （onPopupOpen 里对弹窗容器 disableClickPropagation 是双保险。） */
+function showShot(ev, el){
+  if (ev && ev.stopPropagation) { ev.stopPropagation(); ev.preventDefault(); }
   const sid = el && el.dataset ? el.dataset.sid : '';
   const i = el && el.dataset ? (parseInt(el.dataset.i, 10) || 0) : 0;
   const m = markerBySid[sid], sp = spotBySid[sid];
   if(!m || !sp) return;
   m.setPopupContent(shotPanel(sp, i));
+  // 换图后尺寸会变（竖图更高、手记更长…）⇒ 重新判定"要不要翻转 / 有没有超出视野"
+  if (m.isPopupOpen && m.isPopupOpen()) onPopupOpen(m.getPopup());
 }
 
 function popupHtml(sp){ return shotPanel(sp, 0); }
 
-/* 弹窗必须**完整落在视野里**（用户 2026-10-05："点完序号，图可能超出我的框框，导致看不到"）。
+/* 弹窗打开时统一处理两件事（用户 2026-10-05 报的两个问题都在这）：
  *
- * 为什么不能只靠 Leaflet 自带的 autoPan（实测两次都没用）：
+ * ① **上方装不下就翻到序号下面**（`.pop-below`）。
+ *    为什么非要翻：在"未放大"的全校视野下，地图几乎没有可平移余量
+ *    （视野锁在校园外框内，见 FRAME_PAD），靠近顶部的序号弹窗**怎么挪都装不下**，
+ *    只靠 keepPopupInView 的平移救不了（实测顶部仍会冒出去）。
+ *    Leaflet 的 popup 没有内置翻转能力，所以自己加类 + 自己改小尖角的 CSS。
+ *
+ * ② **禁止弹窗内部的点击冒泡到地图**。Leaflet 默认"点地图关弹窗"
+ *    （`closePopupOnClick`），于是点缩略图／上下一幅想换图时，弹窗反而被关掉了 ——
+ *    用户原话："点击画之间切换的时候，预览框会消失，需要重新点序号才能再看到"。
+ *    这里对弹窗容器 disableClickPropagation，换图就不会误关。 */
+function onPopupOpen(popup){
+  const el = popup && popup.getElement && popup.getElement();
+  if (!el) return;
+  L.DomEvent.disableClickPropagation(el);
+  L.DomEvent.disableScrollPropagation(el);
+  keepPopupInView(popup);      // 翻转判定 + 平移补救都在它里面（会重复执行）
+}
+
+/* 弹窗必须**完整落在视野里**（用户 2026-10-05："点完序号，图可能超出我的框框"）。
+ *
+ * 为什么不能只靠 Leaflet 自带的 autoPan（实测三次都没用）：
  *   ① 视野锁在校园外框内（maxBounds），贴边时 autoPan 想挪也挪不动；
- *   ② 更要命的是 **弹窗里的图是异步加载的** —— 打开那一刻图还没尺寸，
- *      autoPan 认为"装得下"，等图加载完弹窗**向上长高**，这一步不会再 autoPan
- *      ⇒ 顶部被裁（实测 delta.top = -15px，而下面还空着 472px）。
+ *   ② **弹窗里的图是异步加载的** —— 打开那一刻图还没尺寸、弹窗只有 ~180px，
+ *      等图加载完会长到 400+px，这一步不会再 autoPan；
+ *   ③ 最要命的是**翻转判定也不能只看打开那一刻**：第一版写在 popupopen 里，
+ *      于是"上方够用"一直成立，图加载完照样从顶部冒出去 108px（实测 GULOU-04）
+ *      ⇒ 判定必须放进"会重复执行"的 fix() 里。
  *
- * 所以自己接管：打开后立刻量一次、图 load 之后再量一次、
- * 80ms 后再兜一次（内容/字体可能还有微调）。超了就 panBy 把视野挪回来。
- * 符号说明：panBy(offset) 是**把地图中心移动 offset**，所以内容看起来往反方向走 ——
- * 要把内容往下挪 d 像素，得让中心往上（-d）。 */
+ * 策略：**能翻就翻**（加 `.pop-below`，小尖角跟着朝上），翻不了再用 panBy 挪视野。
+ * 重复执行三次：立刻、图 load 之后、80ms 后（内容/字体可能还有微调）。
+ * 符号说明：panBy(offset) 移动的是**地图中心**，所以要把内容往下挪 d 就得传 -d。 */
 function keepPopupInView(popup){
   const PAD = 10;
   const fix = () => {
     const el = popup && popup.getElement && popup.getElement();
     if (!el) return;
+
+    // ① 按**当前**高度重判"要不要翻到下面"（图加载完高度会变）
+    const src = popup._source;                              // 触发它的 marker
+    if (src && src.getLatLng) {
+      const pt = map.latLngToContainerPoint(src.getLatLng());
+      const h = el.getBoundingClientRect().height;
+      const need = h + 34;                                  // 弹窗高 + 小尖角 + 余量
+      const want = pt.y < need;                             // 上方不够 → 放到下面
+      if (want !== el.classList.contains('pop-below')) {
+        el.classList.toggle('pop-below', want);
+        // ⚠ 偏移量必须**按弹窗高度算**，不能写死一个小数字：
+        //   弹窗的"底边"默认贴在锚点上方 36px 处、然后向上生长 —— 要让它整个挪到下面，
+        //   得把底边推到 h + 36 + 26 的位置（第一版写死 30px，只挪下去 31px，
+        //   实测仍从顶部冒出 77px）。
+        popup.options.offset = L.point(0, want ? h + 62 : 0);
+        popup.update();                                     // 让 offset / 类生效
+        return fix();                                       // 位置变了，重量一次
+      }
+    }
+
+    // ② 残余的溢出（通常是左右贴边、或翻过去之后下方也不够）用平移补
     const box = map.getContainer().getBoundingClientRect();
     const r = el.getBoundingClientRect();
     let dx = 0, dy = 0;

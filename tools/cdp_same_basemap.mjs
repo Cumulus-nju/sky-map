@@ -109,53 +109,95 @@ record("★ 成品页底图与投稿选机位**是同一张图**（逐字节相�
 record("三个校区都带上了立体底图", Array.isArray(got.missing) && got.missing.length === 0,
   `缺：${JSON.stringify(got.missing)}`);
 
-// ============ 多图打卡点的弹窗：一次一幅 + 能切换 + **不许超出地图框** ============
-// 用户 2026-10-05："点完序号，图可能会超出我的框框，导致看不到"。
-// 老做法把一个点的所有作品竖着堆进弹窗（3 幅 ≈ 1100px > 地图容器高）⇒ 被裁。
-// 新做法：一次只展示一幅 + 缩略图条切换。判据直接量**几何**：
-// 弹窗矩形必须完整落在地图容器内（这条比"看起来对"可靠）。
-const popTest = await inFrame(
+// ============ 弹窗内容：多图时"一次一幅 + 缩略图切换" ============
+// ⚠ 聚类阈值收到 5 m 后，本地演示数据**不再合并**（21 幅 = 21 个点），
+//   所以造不出真实的多图点 —— 直接拿现有 spot **复制一份 shots** 喂给 shotPanel()，
+//   验的是"面板会不会把多幅全堆出来"这件正事（新设计必须只有 1 张主图 + 缩略图条）。
+const panel = await inFrame(
   "typeof w.eval('typeof DATA') === 'string' && w.eval('typeof DATA') === 'object'",
   `(function(){
-  const multi = (DATA.spots || []).find(sp => (sp.shots || []).filter(s => s.src).length > 1);
-  if (!multi) return {skip: '本地没有多图打卡点'};
-  const n = multi.shots.filter(s => s.src).length;
-  const m = markerBySid[multi.sid];
-  if (!m) return {err: 'no marker for ' + multi.sid};
-  m.openPopup();
-  const read = () => ((document.querySelector('.pnav span') || {}).textContent || '').trim();
-  const mapBox = document.getElementById('map').getBoundingClientRect();
-  const el = document.querySelector('.leaflet-popup');
-  const r = el ? el.getBoundingClientRect() : null;
-  const out = {sid: multi.sid, n: n,
-               thumbs: document.querySelectorAll('.pthumbs img').length,
-               first: read()};
-  const t2 = document.querySelectorAll('.pthumbs img')[1];
-  if (t2) t2.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true}));
-  out.second = read();
-  out.popH = r ? Math.round(r.height) : null;
-  out.mapH = Math.round(mapBox.height);
-  out.inside = r ? (r.top >= mapBox.top - 1 && r.bottom <= mapBox.bottom + 1
-                    && r.left >= mapBox.left - 1 && r.right <= mapBox.right + 1) : null;
-  // 量出**每条边差多少**（超出为负/正），不然只知道"不通过"没法修
-  out.delta = r ? {
-    top: Math.round(r.top - mapBox.top),          // <0 = 从上面冒出去
-    bottom: Math.round(mapBox.bottom - r.bottom), // <0 = 从下面冒出去
-    left: Math.round(r.left - mapBox.left),
-    right: Math.round(mapBox.right - r.right),
-  } : null;
-  out.markerY = Math.round(m.getLatLng ? 0 : 0);
-  return out;
+  const base = (DATA.spots || []).find(sp => (sp.shots || []).length > 0);
+  if (!base) return {skip: '本地没有带作品的点'};
+  const sp = JSON.parse(JSON.stringify(base));
+  sp.shots = sp.shots.concat(JSON.parse(JSON.stringify(sp.shots)));   // 变成 2 幅
+  const n = sp.shots.length;
+  const html1 = shotPanel(sp, 0), html2 = shotPanel(sp, 1);
+  const count = (s, re) => (s.match(re) || []).length;
+  return {n: n,
+    oneMain: [count(html1, /class="pmain"/g), count(html2, /class="pmain"/g)],
+    thumbs: [count(html1, /class="pthumbs"/g), count(html2, /class="pthumbs"/g)],
+    thumbImgs: count(html1, /data-i="/g),
+    head1: (html1.match(/第 \\d+ \\/ \\d+ 幅/) || [])[0] || '',
+    head2: (html2.match(/第 \\d+ \\/ \\d+ 幅/) || [])[0] || ''};
 })()`);
-console.log("弹窗（多图）:", JSON.stringify(popTest));
-record("多图打卡点：弹窗一次一幅 + 缩略图能切换",
-  !!(popTest && !popTest.skip && popTest.thumbs === popTest.n
-     && popTest.first.indexOf("第 1 / " + popTest.n + " 幅") >= 0
-     && popTest.second.indexOf("第 2 / " + popTest.n + " 幅") >= 0),
-  JSON.stringify(popTest));
-record("弹窗完整落在地图框内（不再被裁掉）",
-  !!(popTest && (popTest.skip || popTest.inside === true)),
-  `弹窗高 ${popTest && popTest.popH}px / 地图高 ${popTest && popTest.mapH}px · inside=${popTest && popTest.inside}`);
+console.log("面板（合成 2 幅）:", JSON.stringify(panel));
+record("多图：面板一次只放一张主图 + 缩略图条 + 第 i/N 幅",
+  !!(panel && !panel.skip && panel.oneMain[0] === 1 && panel.oneMain[1] === 1
+     && panel.thumbs[0] === 1 && panel.thumbs[1] === 1 && panel.thumbImgs >= 2
+     && /第 1 \/ \d+ 幅/.test(panel.head1) && /第 2 \/ \d+ 幅/.test(panel.head2)),
+  JSON.stringify(panel));
+
+// ============ 点弹窗**内部**不能把弹窗关掉 ============
+// 用户 2026-10-05："点击画之间切换的时候，预览框会消失，需要重新点序号才能再看到"。
+// 根因：点击冒泡到地图 ⇒ 触发 Leaflet 默认的"点地图关弹窗"。
+const stayOpen = await inFrame(
+  "typeof w.eval('typeof DATA') === 'string' && w.eval('typeof DATA') === 'object'",
+  `(function(){
+  const sid = Object.keys(markerBySid)[0];
+  if (!sid) return {err: 'no marker'};
+  map.closePopup();
+  markerBySid[sid].openPopup();
+  const el = document.querySelector('.leaflet-popup');
+  if (!el) return {err: 'popup not open'};
+  const inner = el.querySelector('.leaflet-popup-content') || el;
+  inner.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true}));
+  return {after: !!document.querySelector('.leaflet-popup')};
+})()`);
+console.log("点弹窗内部:", JSON.stringify(stayOpen));
+record("点弹窗内部（换图/看内容）不会把弹窗关掉",
+  !!(stayOpen && stayOpen.after === true), JSON.stringify(stayOpen));
+
+// ============ 逐个序号量一遍：**每个可见**弹窗都得完整落在框内 ============
+// 用户 2026-10-05："在没放大地图的时候，点序号后图还是会超出去"。
+// 只测一个序号不够 —— 靠近上边缘的那个才是最难的（上方没地方，得翻到下面去）。
+// ⚠ 只扫**当前视野内可见**的序号：视野锁在本校区外框内，别的校区的点用户根本点不到，
+//   量它们只会得到"偏出几万像素"这种没意义的数（第一版就这么误报过）。
+const sweepSids = await inFrame(
+  "typeof w.eval('typeof DATA') === 'string' && w.eval('typeof DATA') === 'object'",
+  `Object.keys(markerBySid).filter(sid =>
+     map.getBounds().contains(markerBySid[sid].getLatLng()))`);
+const sweep = [];
+for (let i = 0; i < (sweepSids || []).length; i++) {
+  const sid = sweepSids[i];
+  await inFrame(
+    "typeof w.eval('typeof DATA') === 'string' && w.eval('typeof DATA') === 'object'",
+    `(function(){ map.closePopup(); markerBySid[${JSON.stringify(sid)}].openPopup(); return 1; })()`);
+  await sleep(430);          // 等图片加载 + keepPopupInView 的重排跑完
+  const m = await inFrame(
+    "typeof w.eval('typeof DATA') === 'string' && w.eval('typeof DATA') === 'object'",
+    `(function(){
+      const el = document.querySelector('.leaflet-popup');
+      const box = document.getElementById('map').getBoundingClientRect();
+      if (!el) return {sid: ${JSON.stringify(sid)}, missing: true};
+      const b = el.getBoundingClientRect();
+      return {sid: ${JSON.stringify(sid)}, h: Math.round(b.height),
+              top: Math.round(b.top - box.top), bottom: Math.round(box.bottom - b.bottom),
+              left: Math.round(b.left - box.left), right: Math.round(box.right - b.right),
+              flipped: el.classList.contains('pop-below')};
+    })()`);
+  if (m) sweep.push(m);
+}
+const worst = sweep.reduce((a, b) => {
+  const score = x => Math.min(x.top, x.bottom, x.left, x.right);
+  return (!a || score(b) < score(a)) ? b : a;
+}, null);
+const allInside = sweep.length > 0 && sweep.every(x => !x.missing
+  && x.top >= -1 && x.bottom >= -1 && x.left >= -1 && x.right >= -1);
+console.log(`逐个数号量弹窗：可见 ${sweep.length} 个，最差 ->`, JSON.stringify(worst));
+console.log("  翻转(pop-below)的序号数:", sweep.filter(x => x.flipped).length);
+record("每个**可见**序号的弹窗都完整落在框内（含未放大时靠边的）", allInside,
+  `共 ${sweep.length} 个 · 最差边距 top=${worst && worst.top} bottom=${worst && worst.bottom} `
+  + `left=${worst && worst.left} right=${worst && worst.right}（≥0 才算在里面）`);
 // ============ 标记不做缩略图预览 + 地图里不出现姓名/昵称 ============
 // 用户 2026-10-05：① "点完序号后退出来，预览框不会消失 —— 干脆就别要预览框了"
 //                 ② "名字/昵称不要在打卡地图里显示"

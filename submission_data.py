@@ -491,13 +491,30 @@ def _nearest_landmark_name(lat: float, lon: float, marks: list[Landmark], max_m:
     return best if best_d <= max_m else ""
 
 
+# 同一个打卡点的**合并半径（米）**。**越小越严**。
+#
+# 用户 2026-10-05 反馈："选点过近会被算作同一个地点，这样做挺好，但'过近'的判断
+# 应该稍微严苛一点，防止误判 —— 离得真的很近才能算。" 随后定为 **5 m**。
+# 演变：60 → 30 → 10 → **5**（60 m 会把"北大楼前草坪"和"北大楼东侧"这种确实不同的
+# 机位并成一个点；5 m 基本等于"同一小片落脚点"）。
+# ⚠ 代价（心里有数即可）：手机端点击精度约 5 m/格（356 px 显示 2000 px 底图 ≈ 5.6 m/px），
+#   而且**点屋顶会吸附到楼基**、同一栋楼的两次点选可能差十几米 ⇒ 同一栋楼的两幅作品
+#   可能不再并成一个点。若发现"同一个地方被拆成好几个点"，把下面这个数调回 10~30 即可。
+SPOT_MERGE_RADIUS_M = 5.0
+
+
 def cluster_spots(
     subs: list[Submission],
     *,
-    radius_m: float = 60.0,
+    radius_m: float | None = None,
     index: dict[str, list[Landmark]] | None = None,
 ) -> list[Spot]:
-    """按校区把 60 m 内的投稿并成一个打卡点（单链聚类，简单且够用）。"""
+    """按校区把**很近**的投稿并成一个打卡点（单链聚类，简单且够用）。
+
+    判据是"到**当前簇质心**的距离 ≤ `radius_m`"（默认 `SPOT_MERGE_RADIUS_M`）。
+    用质心而不是"到任一成员"：簇越大质心越稳，不容易把边缘点一路链出去。
+    """
+    r = SPOT_MERGE_RADIUS_M if radius_m is None else float(radius_m)
     idx = index if index is not None else build_landmark_index()
     spots: list[Spot] = []
     by_campus: dict[str, list[Submission]] = {}
@@ -511,7 +528,7 @@ def cluster_spots(
         for s in items:
             placed = False
             for c in clusters:
-                if haversine(s.lat, s.lon, c[0], c[1]) <= radius_m:
+                if haversine(s.lat, s.lon, c[0], c[1]) <= r:
                     c[2].append(s)
                     n = len(c[2])
                     c[0] = sum(x.lat for x in c[2]) / n

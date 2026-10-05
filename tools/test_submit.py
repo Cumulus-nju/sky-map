@@ -17,10 +17,12 @@ sys.path.insert(0, str(HERE))
 from campus_config import CAMPUSES, in_bbox  # noqa: E402
 from photos import make_thumb, parse_shot_time, read_exif  # noqa: E402
 from submission_data import (  # noqa: E402
+    SPOT_MERGE_RADIUS_M,
     Submission,
     build_landmark_index,
     cluster_spots,
     export_csv,
+    haversine,
     resolve_location,
     similarity,
 )
@@ -102,10 +104,37 @@ def main() -> int:
         Submission(sid="P0002", campus="gulou", lat=32.05711, lon=118.77421, title="B", author="乙"),
         Submission(sid="P0003", campus="gulou", lat=32.0528, lon=118.7732, title="C", author="丙"),
     ]
-    spots = cluster_spots(subs, radius_m=60, index=idx)
+    # 不传 radius_m，用**生产默认值**（别在测试里写死数字，否则改了阈值测试还绿）
+    spots = cluster_spots(subs, index=idx)
     check("相近两点并成一簇", len(spots) == 2, f"{len(spots)} 个打卡点")
     check("簇内计数正确", sorted(s.count for s in spots) == [1, 2])
     check("打卡点有编号", all(s.sid for s in spots), " ".join(s.sid for s in spots))
+
+    print("\n[9b] 合并阈值要**严**：离得真的很近才算同一个点")
+    # 用户 2026-10-05："'过近'的判断应该稍微严苛一点，防止误判 ——
+    # 离得真的很近才能算。" 原来 60 m 太松（会把相邻机位并掉）
+    base_lat, base_lon = 32.0571, 118.7742
+
+    def two_at(meters: float) -> list:
+        d = meters / 111320.0                       # 纬度方向：1° ≈ 111320 m
+        return [
+            Submission(sid="Q1", campus="gulou", lat=base_lat, lon=base_lon, title="A"),
+            Submission(sid="Q2", campus="gulou", lat=base_lat + d, lon=base_lon, title="B"),
+        ]
+
+    check("阈值已按用户要求收到很严（≤ 10 m）", SPOT_MERGE_RADIUS_M <= 10.0,
+          f"当前 {SPOT_MERGE_RADIUS_M:g} m（演变 60→30→10→5）")
+    check("haversine 自检（5 m 换算无误）",
+          abs(haversine(base_lat, base_lon, base_lat + 5 / 111320.0, base_lon) - 5) < 0.5)
+    for meters, want, why in (
+        (2, 1, "2 m：几乎同一个点，并"),
+        (4, 1, "4 m：仍在阈值内，并"),
+        (8, 2, "8 m：已超出阈值，拆开"),
+        (25, 2, "25 m：明显是另一个机位，拆开"),
+        (55, 2, "55 m：**旧阈值 60 m 会并，现在必须分开**"),
+    ):
+        got = len(cluster_spots(two_at(meters), index=idx))
+        check(f"{meters:>2} m → {want} 个打卡点（{why}）", got == want, f"得到 {got}")
 
     print("\n[10] CSV 导出")
     subs_csv = [
