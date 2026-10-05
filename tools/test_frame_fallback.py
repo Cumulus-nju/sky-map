@@ -191,6 +191,28 @@ try:
 except Exception as exc:
     check("未知 key 不抛异常", False, f"{type(exc).__name__}: {exc}")
 
+# ---------------------------------------------------------------------------
+print("\n[7] 入口脚本必须扛得住「旧 site_common」（2026-10-05 线上 IndexError 的教训）")
+# 规律：Streamlit 只对 **import 进来的模块**做模块级热重载，而**入口脚本每次重跑都是新的**
+# ⇒ 出现"新 app.py + 旧 site_common.py"。当时 `take_pick()` 的返回值从 2 个改成 3 个，
+#   app.py 直接写 `from_pick[2]` ⇒ **IndexError 整页崩，而且只在点选之后才炸**
+#   （那行只在收到回传时才执行，所以页面看着好好的）。
+# 结论：**跨模块的兼容逻辑必须自包含写在入口脚本里，且不得依赖任何新函数** ——
+#       旧模块里没有新函数，`S.merge_pick(...)` 这种写法会 AttributeError。
+import site_common as _sc  # noqa: E402
+
+_src = (HERE / "app.py").read_text(encoding="utf-8")
+check("app.py 不再裸取 take_pick() 的第三个值（旧模块只有两个值）",
+      "from_pick[2]" not in _src)
+check("app.py 先 len() 判长度再取校区（两种形状都吃）",
+      "len(raw) > 2" in _src and "str(raw[2])" in _src)
+check("app.py 不调用 site_common 的新函数（旧模块里不存在 ⇒ AttributeError）",
+      "S.merge_pick(" not in _src and "S.pick_api_ok(" not in _src)
+check("site_common 自报接口形状版本（app.py 据此给可见告警）",
+      getattr(_sc, "PICK_API", None) == 2, f"PICK_API={getattr(_sc, 'PICK_API', None)}")
+check("app.py 的告警读取也做了 getattr 兜底（旧模块没有该常量）",
+      'getattr(S, "PICK_API", 1)' in _src)
+
 print("\n" + "=" * 64)
 if FAILS:
     print(f"✗ {len(FAILS)} 项失败：" + "、".join(FAILS))

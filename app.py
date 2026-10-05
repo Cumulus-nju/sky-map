@@ -222,6 +222,17 @@ def main() -> None:
             "功能可用，但若与最新配置不一致，请到 Streamlit Cloud → Manage app → **Reboot** 重启容器。",
             icon="⚠️",
         )
+    # site_common 也自检：它是"点选回传"的桥，新旧混用会让选点整条失效。
+    # 2026-10-05 线上就是这么崩的：新 app.py + 旧 site_common ⇒ take_pick() 返回值少一个，
+    # 取第三个值时 IndexError（而且**只在点选之后**才炸）。归并逻辑已改成两种形状都吃，
+    # 这里只额外给一句**可见提示**，让"模块旧"这件事自己说出来。
+    if getattr(S, "PICK_API", 1) != 2:
+        st.warning(
+            "检测到 `site_common` 模块不是最新版（选点接口为旧形状）。"
+            "点选功能已做兼容、可正常用，但建议到 Streamlit Cloud → Manage app → "
+            "**Reboot** 重启容器，让模块与代码对齐。",
+            icon="⚠️",
+        )
 
     st.title("🌤 天光云影 · 校园天空摄影大赛投稿")
 
@@ -253,20 +264,27 @@ def main() -> None:
         state_key = f"picked_{campus_key}"
         picked = st.session_state.get(state_key)
 
-        # 静态底图上的点选：组件把坐标写进 URL 查询参数，这里读走并落到 session_state。
-        # 为什么用查询参数中转：st_folium 的 last_clicked 在静态图方案里没有了，
-        # 而 components 组件没有返回值通道，查询参数是最省事且可靠的桥。
-        #
-        # ⚠ `take_pick()` **故意不清除** `pick`（清了会让 Streamlit 的查询参数同步坏掉，
-        # 症状是"第二次选点起完全不生效"——详见 site_common.take_pick 的注释）。
-        # 所以这里必须**按 pick_campus 归位**：否则用户点完鼓楼再切到仙林，
-        # 鼓楼的坐标会被错记到仙林名下。
-        from_pick = S.take_pick()
-        if from_pick and (from_pick[2] == campus_key or not from_pick[2]):
-            pt = (from_pick[0], from_pick[1])
-            if pt != picked:
-                st.session_state[state_key] = pt
-                picked = pt
+        # 归并点选回传。⚠ **这段必须自包含、不许依赖任何新函数/新签名**：
+        #   云端可能出现"新 app.py + 旧 site_common.py"。规律是 —— Streamlit 只对
+        #   **import 进来的模块**做模块级热重载，而**入口脚本每次都重新执行**，
+        #   所以只有 app.py 一定是最新的；兼容逻辑写在这里才靠得住。
+        #   旧版 `take_pick()` 只返回 `(lat, lon)`（且会自己清除参数），直接取 `[2]`
+        #   会 IndexError 整页崩 —— 2026-10-05 线上就是这么崩的，
+        #   而且**只在点选之后才炸**（这行只在收到回传时才执行）。
+        raw = S.take_pick()
+        pt = None
+        if raw:
+            try:
+                _lat, _lon = float(raw[0]), float(raw[1])
+                _pc = str(raw[2]) if len(raw) > 2 else ""   # 旧模块没有第三个值
+                if not _pc or _pc == campus_key:             # 缺校区字段就按当前校区接受
+                    _cand = (_lat, _lon)
+                    pt = None if _cand == picked else _cand
+            except (TypeError, ValueError, IndexError):
+                pt = None
+        if pt:
+            st.session_state[state_key] = pt
+            picked = pt
 
         clicked = render_picker(campus_key, picked)
         # 兜底分支（在线地图）仍走 last_clicked

@@ -77,6 +77,15 @@ def clear_qp(*names: str) -> None:
             pass
 
 
+# `take_pick()` 的**接口形状版本**（自检用，别删）：
+#   1 = 旧版：返回 (lat, lon)，并且读走就 `del st.query_params['pick']`
+#   2 = 新版：返回 (lat, lon, campus)，**不清除**参数
+# ⚠ 为什么要有这个常量：Streamlit Cloud 只改 .py 时可能只做**模块级热重载**，
+#   于是出现"新 app.py + 旧 site_common.py"。app.py 靠这个常量判断要不要告警，
+#   并**两种形状都兼容**（2026-10-05 线上就是因此 IndexError 整页崩掉的）。
+PICK_API = 2
+
+
 def take_pick() -> tuple[float, float, str] | None:
     """读取"刚在静态底图上点选"的坐标，返回 `(lat, lon, campus_key)`。
 
