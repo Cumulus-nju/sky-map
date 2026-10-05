@@ -653,7 +653,11 @@ function report(isPick, lat, lon) {{
     const u = new URL(window.parent.location.href);
     u.searchParams.set('pnav', navStr);
     if (pickStr) {{ u.searchParams.set('pick', pickStr); u.searchParams.set('pick_campus', D.campus); }}
-    window.parent.history.replaceState({{}}, '', u.toString());
+    // ⚠ **必须保留父页面原有的 history.state**（传空的 state 会把 Streamlit
+    //   自己存进去的标记抹掉）。踩过的坑（2026-10-05）：抹掉之后**第一次**选点还正常，
+    //   从第二次起 popstate 就不再触发 rerun 了 —— 症状是"重新选点，下面'已选机位'不动、
+    //   URL 里的 pick 也一直没人消费"。原因就是 Streamlit 前端的 popstate 处理依赖那个 state。
+    window.parent.history.replaceState(window.parent.history.state, '', u.toString());
     // 只有选点才让 Streamlit 重跑（视图变化不重跑）
     if (isPick) window.parent.dispatchEvent(new PopStateEvent('popstate'));
   }} catch (e) {{

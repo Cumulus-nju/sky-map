@@ -303,10 +303,54 @@ record("⑦ 拖动/缩放不再触发 Streamlit 重跑（不闪不卡）",
   `popstate=${after7 && after7.pop}（期望 0）· 组件存活=${alive}（期望 true）`
   + ` · zoom ${interacted && interacted.z0}→${interacted && interacted.zAfterWheel}`);
 
-// ============ ⑧ 组件初始尺寸 == 终态比例（否则每次重建都"先宽后窄"跳一下）============
+// ============ ⑨ **重新选点**时，页面下方"已选机位"必须跟着更新 ============
+// 用户 2026-10-05："现在这版我重新选点，下面的已选机位不会动诶"。
+// ⚠ 现有用例只验了"第一次选点"，第二次选点这条路径**没有任何覆盖** —— 补上。
+// 判据：连选两个明显不同的点，页面上那句"已选机位：lat, lon"必须**两次都变**，
+//       且各自贴在对应位置（不能停在第一次的坐标上）。
+await navigate();
+if (!await waitReady("⑨ 重新选点")) { try { child.kill(); } catch {} process.exit(1); }
+const readPicked = "(function(){ const t = document.body.innerText || '';"
+  + " const m = t.match(/已选机位：([0-9.\\-]+),\\s*([0-9.\\-]+)/);"
+  + " return m ? [parseFloat(m[1]), parseFloat(m[2])] : null; })()";
+const p9a = await frameEval(PICK_PROBE);
+if (!p9a || p9a.err) { console.log("✗ ⑨ 挑不到屋顶:", JSON.stringify(p9a)); try { child.kill(); } catch {} process.exit(1); }
+await frameEval(seq(RCLICK(p9a.inFrame[0], p9a.inFrame[1]), "mouse"));
+await sleep(11000);                                  // 等 Streamlit 重跑 + 回显
+const boxA = await ev(readPicked);
+console.log(`  第 1 次选点：页面显示 ${JSON.stringify(boxA)}，期望≈${p9a.want.map(v => v.toFixed(4))}`);
+
+const p9b = await frameEval(PICK_PROBE);            // 组件已重建，重新探针
+if (!p9b || p9b.err) { console.log("✗ ⑨ 第二次挑不到屋顶:", JSON.stringify(p9b)); try { child.kill(); } catch {} process.exit(1); }
+// 换一个**明显不同**的位置（往右下挪 70px，并确保还在框内）
+const offX = Math.min(70, Math.max(10, p9b.vp[0] - p9b.inFrame[0] - 12));
+const offY = Math.min(70, Math.max(10, p9b.vp[1] - p9b.inFrame[1] - 12));
+const bx2 = p9b.inFrame[0] + offX, by2 = p9b.inFrame[1] + offY;
+// ⚠ 期望值必须按**实际派发的那个点**算（不能拿第一次的屋顶期望值来比 —— 那是我第一版的错）
+const expectB = await frameEval(`(function(){ var raw = screenToImg(${bx2}, ${by2});`
+  + " var p = snapToFootprint(raw[0], raw[1]); return imgPxToLatLng(p[0], p[1]); })()");
+// 装个 popstate 计数器：用来证明"事件确实发出去了，问题只可能在后端"
+await ev("(function(){ window.__pop9 = 0;"
+  + " window.addEventListener('popstate', function(){ window.__pop9++; }); return true; })()");
+const rcb = await frameEval(seq(RCLICK(bx2, by2), "mouse"));
+console.log(`  第 2 次右键：组件内 ${JSON.stringify(rcb)} · popstate=${JSON.stringify(await ev("window.__pop9"))}`);
+await sleep(11000);
+const boxB = await ev(readPicked);
+console.log(`  第 2 次选点：页面显示 ${JSON.stringify(boxB)}（比第 1 次挪了 ${offX},${offY}px）`);
+
+const changed = !!(boxA && boxB) &&
+  (Math.abs(boxA[0] - boxB[0]) > 1e-6 || Math.abs(boxA[1] - boxB[1]) > 1e-6);
+// 第二次的值必须真的落在第二次点的地方（不能只"变了"而是变到别处）
+const okA = !!boxA && Math.max(Math.abs(boxA[0] - p9a.want[0]), Math.abs(boxA[1] - p9a.want[1])) <= 2e-4;
+const okB = !!boxB && Math.max(Math.abs(boxB[0] - expectB[0]), Math.abs(boxB[1] - expectB[1])) <= 2e-4;
+record("⑨ 重新选点：页面下方「已选机位」跟着更新",
+  changed && okA && okB,
+  `第1次 ${JSON.stringify(boxA)}（对=${okA}） → 第2次 ${JSON.stringify(boxB)}（对=${okB}）`
+  + ` · 两次不同=${changed}`);
 // 用户 2026-10-05："选点后还是会闪一下"。根因之一：初始 CSS 尺寸是 1200×980
 // （宽度没按高反推），等图加载完 fitToParent() 再缩成 884×980 ⇒ 肉眼一次横向跳。
 // 判据：payload 里的 outW/outH 比例必须与组件实际尺寸比例一致（<1%）。
+// ============ ⑧ 组件初始尺寸 == 终态比例（否则每次重建都"先宽后窄"跳一下）============
 const geo8 = await frameEval("({outW: D.outW, outH: D.outH, vw: vw(), vh: vh()})");
 const rInit = geo8 ? geo8.outW / geo8.outH : NaN;
 const rNow = geo8 ? geo8.vw / geo8.vh : NaN;

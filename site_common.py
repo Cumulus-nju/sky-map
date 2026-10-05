@@ -77,17 +77,30 @@ def clear_qp(*names: str) -> None:
             pass
 
 
-def take_pick() -> tuple[float, float] | None:
-    """取走"刚在静态底图上点选"的坐标，并清除查询参数。
+def take_pick() -> tuple[float, float, str] | None:
+    """读取"刚在静态底图上点选"的坐标，返回 `(lat, lon, campus_key)`。
 
     机制：点选组件是内嵌 iframe，点一下会把 `pick=lat,lon` 写进父窗口 URL
     （同源可写），Streamlit 检测到查询参数变化就 rerun；这里读走它。
-    读走必须清除，否则刷新页面会一直重复套用同一个点。
+
+    ⚠⚠ **故意不清除这个参数**（2026-10-05 踩坑后改的，别再"顺手清理"）：
+    后端一旦 `del st.query_params['pick']`，Streamlit 前端的查询参数同步就**坏掉** ——
+    之后**再写同名参数 + 派发 popstate 都不会再触发 rerun**。
+    症状：第一次点选正常，**从第二次起"重新选点"完全不生效**
+    （URL 里的 pick 一直挂着没人消费、页面下方的「已选机位」永远停在第一次）。
+    实测证据（tools/cdp_dblclick_pick.mjs 第⑨项）：
+      清除开启 → 第 2/3 次写 pick：无 rerun；
+      清除关闭 → 第 2/3 次写 pick：rerun 正常、页面跟着更新。
+    代价：`pick` 会一直留在 URL 里 —— 刷新页面会重新套用同一个点（这其实是好事），
+    但**换校区时必须按 `pick_campus` 归位**，否则会把鼓楼的点记到仙林名下
+    （调用方 `app.py` 已按校区校验）。
+
+    顺带一提 `pnav` 从来不清除，所以它一直是好的。
     """
     raw = qp("pick")
     if not raw:
         return None
-    clear_qp("pick", "pick_campus")
+    campus = qp("pick_campus") or ""
     try:
         la_s, lo_s = raw.split(",")[:2]
         lat, lon = float(la_s), float(lo_s)
@@ -95,7 +108,7 @@ def take_pick() -> tuple[float, float] | None:
         return None
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
         return None
-    return (round(lat, 7), round(lon, 7))
+    return (round(lat, 7), round(lon, 7), campus)
 
 
 def take_nav() -> tuple[float, float, int] | None:

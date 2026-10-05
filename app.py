@@ -256,10 +256,17 @@ def main() -> None:
         # 静态底图上的点选：组件把坐标写进 URL 查询参数，这里读走并落到 session_state。
         # 为什么用查询参数中转：st_folium 的 last_clicked 在静态图方案里没有了，
         # 而 components 组件没有返回值通道，查询参数是最省事且可靠的桥。
+        #
+        # ⚠ `take_pick()` **故意不清除** `pick`（清了会让 Streamlit 的查询参数同步坏掉，
+        # 症状是"第二次选点起完全不生效"——详见 site_common.take_pick 的注释）。
+        # 所以这里必须**按 pick_campus 归位**：否则用户点完鼓楼再切到仙林，
+        # 鼓楼的坐标会被错记到仙林名下。
         from_pick = S.take_pick()
-        if from_pick and from_pick != picked:
-            st.session_state[state_key] = from_pick
-            picked = from_pick
+        if from_pick and (from_pick[2] == campus_key or not from_pick[2]):
+            pt = (from_pick[0], from_pick[1])
+            if pt != picked:
+                st.session_state[state_key] = pt
+                picked = pt
 
         clicked = render_picker(campus_key, picked)
         # 兜底分支（在线地图）仍走 last_clicked
