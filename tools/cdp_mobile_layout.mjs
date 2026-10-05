@@ -26,6 +26,9 @@ const CASES = [
 
 async function runCase(c, port) {
   const EDGE_ARGS = ["--headless=new", "--disable-gpu", "--no-first-run",
+    // ⚠ 绕开本机系统代理：代理出口被 Streamlit 拉黑，线上会 HTTP 444
+    //   （详见 cdp_dblclick_pick.mjs 里的注释）
+    "--no-proxy-server",
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${mkdtempSync(join(tmpdir(), "cdp-layout-"))}`,
     `--window-size=${c.w},${c.h}`, "--hide-scrollbars", "about:blank"];

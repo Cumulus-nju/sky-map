@@ -19,6 +19,9 @@ const port = 9491;
 const EDGE = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const profile = mkdtempSync(join(tmpdir(), "cdp-wake-"));
 const child = spawn(EDGE, ["--headless=new", "--disable-gpu", "--no-first-run",
+  // ⚠ 绕开本机系统代理：代理出口被 Streamlit 拉黑，线上会 HTTP 444
+  //   "source IP address not allowed"（详见 cdp_dblclick_pick.mjs 里的注释）
+  "--no-proxy-server",
   `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
   // ⚠ 窗口要高：侧边栏底部的「构建版本」在 1100 高的视口外，截不到就没法确认部署。
   "--window-size=1500,2400", "--hide-scrollbars", "about:blank"], { stdio: "ignore" });

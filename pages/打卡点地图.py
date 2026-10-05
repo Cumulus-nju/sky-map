@@ -104,7 +104,6 @@ with st.sidebar:
         st.metric("打卡点", f"{len(cluster_spots(subs))} 个")
     except Exception:
         st.metric("打卡点", "—")
-    st.caption(f"存储：{'☁️ 云端 Supabase' if CLOUD else '💾 本地文件'}")
 
 with st.sidebar:
     st.divider()
@@ -121,14 +120,9 @@ with st.sidebar:
                            file_name=ONLINE.name, mime="text/html",
                            use_container_width=True,
                            help="把这份 html 和同目录 thumbs/ 一起发出去就能分享")
-    elif CLOUD:
-        st.caption("云端模式下点上面的按钮生成后可下载。")
-    st.caption("分享给别人：把 `data\\exports` 整个文件夹打包即可。")
 
 # ---------------- 主体 ----------------
 st.markdown("## 🗺 校园天空打卡点地图")
-st.caption("这里就是最终成品。底图默认是**自绘立体底图**（和投稿时选机位看到的是**同一张图**）；"
-           "左上角还可切 **OSM 街道 / 高德卫星 / 矢量底图**。点地图上的编号看作品详情。")
 
 if not subs:
     st.info("还没有投稿。先去「📝 投稿」页提交一幅，再回来看地图。")

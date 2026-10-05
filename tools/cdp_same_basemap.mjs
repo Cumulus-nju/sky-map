@@ -19,6 +19,9 @@ const port = 9581;
 const EDGE = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const profile = mkdtempSync(join(tmpdir(), "cdp-samebase-"));
 const child = spawn(EDGE, ["--headless=new", "--disable-gpu", "--no-first-run",
+  // ⚠ 绕开本机系统代理：代理出口被 Streamlit 拉黑，线上会 HTTP 444
+  //   （详见 cdp_dblclick_pick.mjs 里的注释）
+  "--no-proxy-server",
   `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
   "--window-size=1500,1900", "--hide-scrollbars", "about:blank"], { stdio: "ignore" });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

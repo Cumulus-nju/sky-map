@@ -26,6 +26,11 @@ const port = 9547;
 const EDGE = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const profile = mkdtempSync(join(tmpdir(), "cdp-dblclick-"));
 const child = spawn(EDGE, ["--headless=new", "--disable-gpu", "--no-first-run",
+  // ⚠ `--no-proxy-server` 不能省（2026-10-05 实测）：本机系统代理
+  //   （127.0.0.1:7897，com.vortex.helper）会把请求打到**被 Streamlit 拉黑的出口节点**，
+  //   线上验收会立刻拿到 HTTP 444 "source IP address not allowed"。
+  //   脚本要验的是"站点本身行不行"，所以必须绕开本机代理走直连（直连实测 200 正常）。
+  "--no-proxy-server",
   `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
   // ⚠ 窗口必须够高：选点组件在页面中部，视口太矮时算出的点击坐标会落到视口外，
   //   事件派发不进去 → pick 恒为 null（会被误判成"双击坏了"）。
