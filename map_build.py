@@ -400,7 +400,26 @@ body.embed #campusFloat{display:flex}
    框外看起来就是一圈"留白"，和选机位那页的观感一致。 */
 #map.relief{background:#e9ecef}
 .leaflet-popup-content-wrapper{border-radius:12px;padding:0;overflow:hidden;box-shadow:0 8px 30px rgba(10,20,40,.28)}
-.leaflet-popup-content{margin:0;width:268px}
+/* ⚠ 高度必须封顶：一个打卡点可能有好几幅作品，全堆出来的话弹窗能到 1000+ px，
+   比地图容器还高 ⇒ 超出框框看不到（用户 2026-10-05 反馈）。
+   新设计是"一次只展示一幅 + 缩略图条切换"，弹窗自然就矮；
+   这里再留一道**兜底**：万一文字特别长（手记很长），内部滚动而不是撑破。 */
+.leaflet-popup-content{margin:0;width:268px;max-height:min(68vh,470px);overflow:auto}
+.pop .pmain{width:100%;display:block;background:#e5eaf0;max-height:172px;object-fit:cover}
+.pop .pnav{
+  display:flex;align-items:center;justify-content:space-between;gap:6px;padding:5px 9px;
+  font-size:11px;color:var(--muted);background:#f7f9fc;border-top:1px solid var(--line);
+}
+.pop .pnav button{
+  border:1px solid var(--line);background:#fff;border-radius:5px;width:26px;height:22px;
+  cursor:pointer;line-height:1;padding:0;color:var(--ink2);
+}
+.pop .pthumbs{display:flex;gap:4px;padding:6px 8px;border-top:1px solid var(--line);overflow-x:auto}
+.pop .pthumbs img{
+  width:40px;height:40px;object-fit:cover;border-radius:5px;cursor:pointer;flex:none;
+  border:2px solid transparent;background:#e5eaf0;
+}
+.pop .pthumbs img.on{border-color:var(--accent)}
 .pop img{width:100%;display:block;background:#e5eaf0;max-height:230px;object-fit:cover}
 .pop .pb{padding:10px 12px 12px}
 .pop h3{font-size:14px;margin-bottom:2px;line-height:1.35}
@@ -521,6 +540,8 @@ function initMap(){
   map = L.map('map', {zoomControl:true, minZoom:3, maxZoom:19, preferCanvas:false})
           .setView(c.center, c.zoom);
   L.control.scale({imperial:false, position:'bottomleft'}).addTo(map);
+  // 弹窗要完整落在视野里（见 keepPopupInView 的注释）
+  map.on('popupopen', (e) => keepPopupInView(e.popup));
   applyFrame('gulou');
   buildVectorLayer();
   applyHash();
@@ -557,11 +578,18 @@ function frameFitZoom(ck){
   const zoom = Math.log2(Math.min(vw / (wM / px0), vh / (hM / px0)));
   return Math.max(3, Math.min(18, Math.floor(zoom)));
 }
-/* 把视野锁进外框。maxBoundsViscosity=1 → 边界是硬的，不会弹性回弹。 */
+/* 把视野锁进外框。maxBoundsViscosity=1 → 边界是硬的，不会弹性回弹。
+ *
+ * ⚠ 但**必须留一点余量**（pad 0.02 → 0.06）。原因（2026-10-05 实测）：
+ *   点开序号时 Leaflet 的 autoPan 要把弹窗挪进视野，可视野贴着边界时它挪不动，
+ *   于是弹窗从**上边冒出 15px** 被裁掉（`tools/cdp_same_basemap.mjs` 量的
+ *   delta.top = -15，下面还空着 472px）。多留 6% 的余量后 autoPan 有地方可挪，
+ *   弹窗就能完整落在框内；同时仍远不至于让人把校园拖出视野。 */
+const FRAME_PAD = 0.06;
 function applyFrame(ck){
   const f = frameOf(ck); if(!f) return;
   const b = L.latLngBounds([[f[0], f[1]], [f[2], f[3]]]);
-  map.setMaxBounds(b.pad(0.02));
+  map.setMaxBounds(b.pad(FRAME_PAD));
   map.options.maxBoundsViscosity = 1.0;
   map.setMinZoom(frameFitZoom(ck));
 }
@@ -756,6 +784,7 @@ function spotColor(kind){ return (DATA.weatherKinds[kind]||{}).color || '#7f8c9b
 
 function renderMarkers(spots){
   markerBySid = {};
+  spotBySid = {};                                   // 切换作品时要按 sid 找回打卡点
   spots.forEach((sp, i) => {
     const color = spotColor(sp.kind);
     const ic = L.divIcon({
@@ -764,30 +793,58 @@ function renderMarkers(spots){
       iconSize:[34,34], iconAnchor:[17,34], popupAnchor:[0,-36]
     });
     const m = L.marker(tp(sp.lat, sp.lon), {icon:ic, riseOnHover:true}).addTo(map);
-    m.bindPopup(popupHtml(sp), {maxWidth:300});
+    // autoPanPadding：让 Leaflet 把弹窗挪进视野时**留 18px 边距**，
+    // 否则它会贴着边、看着像被裁（配合 FRAME_PAD 的余量一起生效）
+    m.bindPopup(popupHtml(sp), {maxWidth:300, autoPanPadding:[18,18]});
     m.on('click', () => highlight(sp.sid));
     markerBySid[sp.sid] = m;
+    spotBySid[sp.sid] = sp;
   });
 }
 
-function popupHtml(sp){
+/* 弹窗内容 = **一次只展示一幅作品** + （多幅时）缩略图条与上/下一幅。
+ *
+ * 为什么不是"把该点的所有作品竖着堆出来"（老做法）：一个打卡点可能收了好几幅，
+ * 3 幅就是 1000+ px，比地图容器还高 ⇒ 弹出框被裁掉、下面的图根本看不到
+ * （用户 2026-10-05 反馈"点完序号，图可能超出我的框框"）。
+ * 而且指望 Leaflet 的 autoPan 救不了：地图视野被锁在校园外框内（maxBounds），
+ * 到边界就没法再挪 ⇒ **只能让弹窗本身别长高**。
+ *
+ * 切换用 data-* + 事件委托（`showShot(this)`），不把 sid 拼进 JS 字符串里。
+ */
+let spotBySid = {};
+
+function shotPanel(sp, idx){
+  const shots = sp.shots || [];
+  const i = Math.max(0, Math.min(Math.max(0, shots.length - 1), idx || 0));
+  const s = shots[i] || {};
   const cfg = DATA.campuses[sp.campus];
-  const shots = sp.shots.map((s, i) => `
-    <div class="shot">
-      ${s.src?`<img src="${s.src}" alt="">`:''}
+  const many = shots.length > 1;
+  const tip = (DATA.spotTips && DATA.spotTips[sp.kind]) || '';
+
+  const withPic = shots.map((t, k) => [t, k]).filter(([t]) => t.src);
+  const thumbs = (many && withPic.length > 1) ? `<div class="pthumbs">` + withPic.map(([t, k]) =>
+      `<img src="${t.src}" alt="" class="${k === i ? 'on' : ''}"
+            data-sid="${esc(sp.sid)}" data-i="${k}" onclick="showShot(this)">`).join('') + `</div>` : '';
+  const nav = many ? `<div class="pnav">
+      <button data-sid="${esc(sp.sid)}" data-i="${(i - 1 + shots.length) % shots.length}"
+              onclick="showShot(this)" title="上一幅">‹</button>
+      <span>第 ${i + 1} / ${shots.length} 幅${s.award ? ` · <b style="color:var(--accent)">${esc(s.award)}</b>` : ''}</span>
+      <button data-sid="${esc(sp.sid)}" data-i="${(i + 1) % shots.length}"
+              onclick="showShot(this)" title="下一幅">›</button>
+    </div>` : (s.award ? `<div class="pnav"><span><b style="color:var(--accent)">${esc(s.award)}</b></span></div>` : '');
+
+  return `<div class="pop">
+      ${s.src?`<img class="pmain" src="${s.src}" alt="">`:''}
+      ${nav}
+      ${thumbs}
       <div class="pb">
         <h3>${esc(s.title)}</h3>
-        ${s.award?`<div class="au"><b style="color:var(--accent)">${esc(s.award)}</b></div>`:''}
         ${s.time?`<div class="kv"><i>拍摄</i><span>${esc(s.time)}</span></div>`:''}
         ${s.weather?`<div class="kv"><i>天象</i><span>${esc(s.weather)}</span></div>`:''}
         ${s.camera?`<div class="kv"><i>器材</i><span>${esc(s.camera)}</span></div>`:''}
         ${s.note?`<div class="kv"><i>手记</i><span>${esc(s.note)}</span></div>`:''}
       </div>
-    </div>`).join('');
-  const tip = (DATA.spotTips && DATA.spotTips[sp.kind]) || '';
-  const dz = (cfg.offsets && cfg.offsets.image) ? Math.hypot(cfg.offsets.image[0], cfg.offsets.image[1]) : 0;
-  return `<div class="pop">
-      ${shots}
       <div class="pb" style="border-top:2px solid ${spotColor(sp.kind)}">
         <div class="kv" style="margin-top:0"><i>打卡点</i><span><b>${esc(sp.sid)}</b> ${esc(sp.name||cfg.name)}</span></div>
         <div class="kv"><i>经纬度</i><span>${sp.lat.toFixed(5)}, ${sp.lon.toFixed(5)} <span style="color:var(--muted)">(WGS84)</span></span></div>
@@ -796,6 +853,50 @@ function popupHtml(sp){
         ${tip?`<div class="tip">📷 ${esc(tip)}</div>`:''}
       </div>
     </div>`;
+}
+
+/* 切换当前展示的作品（缩略图 / 上下一幅都走它）。
+   用 `setPopupContent` 原地换内容，**弹窗不会跳位置**，也不会闪。 */
+function showShot(el){
+  const sid = el && el.dataset ? el.dataset.sid : '';
+  const i = el && el.dataset ? (parseInt(el.dataset.i, 10) || 0) : 0;
+  const m = markerBySid[sid], sp = spotBySid[sid];
+  if(!m || !sp) return;
+  m.setPopupContent(shotPanel(sp, i));
+}
+
+function popupHtml(sp){ return shotPanel(sp, 0); }
+
+/* 弹窗必须**完整落在视野里**（用户 2026-10-05："点完序号，图可能超出我的框框，导致看不到"）。
+ *
+ * 为什么不能只靠 Leaflet 自带的 autoPan（实测两次都没用）：
+ *   ① 视野锁在校园外框内（maxBounds），贴边时 autoPan 想挪也挪不动；
+ *   ② 更要命的是 **弹窗里的图是异步加载的** —— 打开那一刻图还没尺寸，
+ *      autoPan 认为"装得下"，等图加载完弹窗**向上长高**，这一步不会再 autoPan
+ *      ⇒ 顶部被裁（实测 delta.top = -15px，而下面还空着 472px）。
+ *
+ * 所以自己接管：打开后立刻量一次、图 load 之后再量一次、
+ * 80ms 后再兜一次（内容/字体可能还有微调）。超了就 panBy 把视野挪回来。
+ * 符号说明：panBy(offset) 是**把地图中心移动 offset**，所以内容看起来往反方向走 ——
+ * 要把内容往下挪 d 像素，得让中心往上（-d）。 */
+function keepPopupInView(popup){
+  const PAD = 10;
+  const fix = () => {
+    const el = popup && popup.getElement && popup.getElement();
+    if (!el) return;
+    const box = map.getContainer().getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    let dx = 0, dy = 0;
+    if (r.top < box.top + PAD) dy = box.top + PAD - r.top;                 // 上面超了
+    else if (r.bottom > box.bottom - PAD) dy = box.bottom - PAD - r.bottom; // 下面超了
+    if (r.left < box.left + PAD) dx = box.left + PAD - r.left;
+    else if (r.right > box.right - PAD) dx = box.right - PAD - r.right;
+    if (dx || dy) map.panBy([-dx, -dy], {animate: false});
+  };
+  fix();
+  const img = popup && popup.getElement && popup.getElement().querySelector('img');
+  if (img && !img.complete) img.addEventListener('load', fix, {once: true});
+  setTimeout(fix, 80);
 }
 
 /* ---------------- 过滤 ---------------- */
@@ -979,7 +1080,7 @@ function fitAll(){
       const latlngs = [];
       boxes.forEach(f => { latlngs.push([f[0],f[1]]); latlngs.push([f[2],f[3]]); });
       const b = L.latLngBounds(latlngs);
-      map.setMaxBounds(b.pad(0.02));
+      map.setMaxBounds(b.pad(FRAME_PAD));      // 与 applyFrame 同一份余量，别各写各的
       map.options.maxBoundsViscosity = 1.0;
       map.fitBounds(b.pad(0.05));
       map.setMinZoom(map.getZoom());

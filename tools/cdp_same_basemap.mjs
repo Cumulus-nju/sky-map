@@ -109,6 +109,53 @@ record("★ 成品页底图与投稿选机位**是同一张图**（逐字节相�
 record("三个校区都带上了立体底图", Array.isArray(got.missing) && got.missing.length === 0,
   `缺：${JSON.stringify(got.missing)}`);
 
+// ============ 多图打卡点的弹窗：一次一幅 + 能切换 + **不许超出地图框** ============
+// 用户 2026-10-05："点完序号，图可能会超出我的框框，导致看不到"。
+// 老做法把一个点的所有作品竖着堆进弹窗（3 幅 ≈ 1100px > 地图容器高）⇒ 被裁。
+// 新做法：一次只展示一幅 + 缩略图条切换。判据直接量**几何**：
+// 弹窗矩形必须完整落在地图容器内（这条比"看起来对"可靠）。
+const popTest = await inFrame(
+  "typeof w.eval('typeof DATA') === 'string' && w.eval('typeof DATA') === 'object'",
+  `(function(){
+  const multi = (DATA.spots || []).find(sp => (sp.shots || []).filter(s => s.src).length > 1);
+  if (!multi) return {skip: '本地没有多图打卡点'};
+  const n = multi.shots.filter(s => s.src).length;
+  const m = markerBySid[multi.sid];
+  if (!m) return {err: 'no marker for ' + multi.sid};
+  m.openPopup();
+  const read = () => ((document.querySelector('.pnav span') || {}).textContent || '').trim();
+  const mapBox = document.getElementById('map').getBoundingClientRect();
+  const el = document.querySelector('.leaflet-popup');
+  const r = el ? el.getBoundingClientRect() : null;
+  const out = {sid: multi.sid, n: n,
+               thumbs: document.querySelectorAll('.pthumbs img').length,
+               first: read()};
+  const t2 = document.querySelectorAll('.pthumbs img')[1];
+  if (t2) t2.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true}));
+  out.second = read();
+  out.popH = r ? Math.round(r.height) : null;
+  out.mapH = Math.round(mapBox.height);
+  out.inside = r ? (r.top >= mapBox.top - 1 && r.bottom <= mapBox.bottom + 1
+                    && r.left >= mapBox.left - 1 && r.right <= mapBox.right + 1) : null;
+  // 量出**每条边差多少**（超出为负/正），不然只知道"不通过"没法修
+  out.delta = r ? {
+    top: Math.round(r.top - mapBox.top),          // <0 = 从上面冒出去
+    bottom: Math.round(mapBox.bottom - r.bottom), // <0 = 从下面冒出去
+    left: Math.round(r.left - mapBox.left),
+    right: Math.round(mapBox.right - r.right),
+  } : null;
+  out.markerY = Math.round(m.getLatLng ? 0 : 0);
+  return out;
+})()`);
+console.log("弹窗（多图）:", JSON.stringify(popTest));
+record("多图打卡点：弹窗一次一幅 + 缩略图能切换",
+  !!(popTest && !popTest.skip && popTest.thumbs === popTest.n
+     && popTest.first.indexOf("第 1 / " + popTest.n + " 幅") >= 0
+     && popTest.second.indexOf("第 2 / " + popTest.n + " 幅") >= 0),
+  JSON.stringify(popTest));
+record("弹窗完整落在地图框内（不再被裁掉）",
+  !!(popTest && (popTest.skip || popTest.inside === true)),
+  `弹窗高 ${popTest && popTest.popH}px / 地图高 ${popTest && popTest.mapH}px · inside=${popTest && popTest.inside}`);
 // ============ 标记不做缩略图预览 + 地图里不出现姓名/昵称 ============
 // 用户 2026-10-05：① "点完序号后退出来，预览框不会消失 —— 干脆就别要预览框了"
 //                 ② "名字/昵称不要在打卡地图里显示"
