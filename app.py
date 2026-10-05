@@ -95,15 +95,28 @@ def save_photo(upload) -> tuple[str, str]:
     """存原图 + 缩略图，返回 (原图引用, 缩略图引用)。
 
     走存储层：本地模式落文件，云端模式进 Supabase。
+
+    ⚠ **云端必须先瘦身**（2026-10-05 线上故障）：照片是 base64 存进数据库 text 字段的，
+    20 MB 的手机原图 base64 后约 27 MB ⇒ ① 单个请求体太大、云端直接拒收（报 HTTPError）；
+    ② 免费层数据库只有 500 MB，20 MB 一张存 18 张就满。
+    所以云端超过 2 MB 就重编码成「长边 ≤ 2560、JPEG q88」（≈A4 300dpi，约 0.6~1.2 MB）；
+    **本地文件存储照旧存原图**（不占数据库，组织者自己留档/印刷更好）。
     """
     import io
 
-    from store import _safe_id, get_store
+    from photo_shrink import ensure_storable, shrink_for_store
+    from store import _safe_id, get_store, storage_kind
 
     raw = upload.getvalue()
     mime = (getattr(upload, "type", "") or "image/jpeg").split(";")[0].strip()
     pid = hashlib.sha1(raw).hexdigest()[:12]
     st_obj = get_store()
+
+    if storage_kind() != "local":
+        raw, mime, note = shrink_for_store(raw, mime)
+        ensure_storable(raw)
+        if note:
+            st.session_state["_photo_note"] = note      # 提交成功后再展示给同学
 
     origin_ref = st_obj.put_photo(pid, raw, mime or "image/jpeg")
 
@@ -233,6 +246,16 @@ def report_save_failure(exc: Exception, upload) -> None:
 
     traceback.print_exc()     # 完整堆栈进 Manage app → Logs
 
+    # "压完还是太大"是我们自己主动拦的，消息本身就是给同学看的，直接展示
+    try:
+        from photo_shrink import PhotoTooLarge
+
+        if isinstance(exc, PhotoTooLarge):
+            st.error(f"**这张照片传不上去：**{exc}")
+            return
+    except Exception:
+        pass
+
     st.error("**投稿没能保存。**（平台把原始报错涂掉了，下面是能拿到的信息）")
     lines = [f"异常：{type(exc).__name__}: {exc}"]
     if status:
@@ -360,7 +383,11 @@ def main() -> None:
     # ---------------- 第二步：上传照片 ----------------
     with st.container(border=True):
         st.subheader("② 上传作品")
-        upload = st.file_uploader("选择照片", type=["jpg", "jpeg", "png", "heic", "webp", "tif", "tiff"])
+        upload = st.file_uploader(
+            "选择照片", type=["jpg", "jpeg", "png", "heic", "webp", "tif", "tiff"],
+            help="**放心传手机原图**：云端会自动压到约 **2 MB**（长边 ≤ 2560，≈A4 300dpi）再入库，"
+                 "既保证评审看得清，也不会把数据库撑爆。单张请尽量不超过 20 MB。",
+        )
 
         exif: dict = {}
         if upload is not None:
@@ -473,6 +500,9 @@ def main() -> None:
                 release_lock()
 
         st.success(f"投稿成功！编号 **{rec.sid}**")
+        _note = st.session_state.pop("_photo_note", "")
+        if _note:
+            st.caption(_note)     # 云端会压缩入库，跟同学说清楚（透明，也免得他们以为传丢了原图）
         if rec.has_point:
             src_label = {"picked": "地图点选", "exif": "照片 EXIF", "text": "文字匹配",
                          "none": "未定点"}.get(rec.loc_source, rec.loc_source)
