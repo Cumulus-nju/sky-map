@@ -54,8 +54,20 @@ async function shoot(dev) {
   }
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
   let id = 0; const pending = new Map();
-  ws.onmessage = (e) => { const m = JSON.parse(e.data);
-    if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } };
+  // 控制台报错：验地图这类改动时，"有没有 JS 报错"和"看着对不对"一样重要 ——
+  // 渲染错一半、另一半照旧能看，只截图是发现不了的。
+  let errors = [];
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.method === "Runtime.exceptionThrown") {
+      errors.push("EXC: " + (m.params?.exceptionDetails?.text
+        || m.params?.exceptionDetails?.exception?.description || ""));
+    } else if (m.method === "Runtime.consoleAPICalled" && m.params?.type === "error") {
+      errors.push("ERR: " + (m.params.args || [])
+        .map((a) => a.value ?? a.description ?? "").join(" "));
+    }
+    if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+  };
   const send = (method, params = {}, s) => new Promise((res) => {
     const mid = ++id; pending.set(mid, res);
     ws.send(JSON.stringify({ id: mid, method, params, ...(s ? { sessionId: s } : {}) }));
@@ -80,6 +92,7 @@ async function shoot(dev) {
   }
 
   for (const p of PAGES) {
+    errors = [];
     await send("Page.navigate", { url: BASE + p.path }, sid);
     let ready = false;
     for (let i = 0; i < 40; i++) {
@@ -108,6 +121,8 @@ async function shoot(dev) {
     console.log(`  标题: ${info.title}`);
     console.log(`  链接: ${JSON.stringify(info.links)}`);
     console.log(`  首屏: ${info.first}`);
+    console.log(`  控制台报错: ${errors.length ? errors.length + " 条" : "无 ✓"}`);
+    for (const e of errors.slice(0, 5)) console.log(`      ${e.slice(0, 160)}`);
     console.log(`  截图: ${file}`);
   }
   try { child.kill(); } catch {}

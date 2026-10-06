@@ -151,8 +151,11 @@ with st.spinner("正在汇总投稿并生成地图…"):
 import datetime
 
 st.caption(f"共 {len(subs)} 幅作品　·　"
-           f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} 生成　·　"
-           "在地图上按 **Ctrl+F5** 可强制刷新底图缓存")
+           f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} 生成")
+# 原来这里还有一句"在地图上按 Ctrl+F5 可强制刷新底图缓存" —— 用户 2026-10-06
+# 要求删掉。它也确实**已经没有意义**了：底图切换条去掉后，唯一的底图是
+# **内嵌的图片**（data URL），不存在"在线瓦片缓存"这回事；真要看最新地图，
+# 该刷新的是 Streamlit 这边的生成缓存（侧栏的「🔄 重新生成并刷新」按钮）。
 
 embed_map(html)
 

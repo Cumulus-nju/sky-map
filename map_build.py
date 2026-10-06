@@ -2,14 +2,20 @@
 
 产出单文件 map.html（可直接发公众号 / 挂网页 / U 盘带走）：
   * 左侧：照片墙 + 打卡点清单，点条目联动地图
-  * 右侧：Leaflet 交互地图，三种底图 —— OSM 街道 / 高德卫星 / 矢量建筑
-  * 高德图层是 GCJ-02 坐标系，渲染时按校区自动纠偏（否则点位整体飘 500 m）
+  * 右侧：Leaflet 交互地图，**只有一种底图** —— 与投稿页"选机位"完全同源的
+    自绘 2.5D 立体图（内嵌 data URL，不依赖网络）
   * 每个打卡点：编号、照片、拍摄时间、天气现象、机位提示
   * 支持按校区 / 天气现象 / 关键词过滤，筛选状态可复制成链接
 
+⚠ 2026-10-06 去掉了底图切换（原来有 立体底图 / OSM 街道 / 高德卫星 / 矢量底图
+  四个按钮）。理由：实际只有立体图一种（2026-10-05 统一的），四个按钮摆在
+  右上角纯属干扰，同学不知道该选哪个。相关的在线瓦片代码、GCJ-02 纠偏、
+  瓦片失败兜底也一并删了 —— 唯一保留的是**矢量底图**，它不再有按钮入口，
+  只在某个校区的立体图生成失败时当兜底（否则那个校区是一片空白）。
+
 用法：
-    python map_build.py               # 在线版（在线瓦片，体积小、底图漂亮）
-    python map_build.py --offline     # 离线单文件版（照片内嵌 + 矢量底图）
+    python map_build.py               # 在线版（照片走相对路径，体积小）
+    python map_build.py --offline     # 离线单文件版（照片也内嵌，断网能看）
 """
 from __future__ import annotations
 
@@ -267,7 +273,13 @@ def build_payload(subs: list[Submission], *, embed_photos: bool,
                 "streets": tile_cfg(c.streets), "imagery": tile_cfg(c.imagery),
                 # 自绘立体底图（data URL）：直接按 frame 四角贴上去就是严丝合缝的
                 "relief": relief.get(k),
-                # 高德图层需要的 GCJ-02 纠偏量（米），EPSG:3857 平面
+                # 高德图层需要的 GCJ-02 纠偏量（米），EPSG:3857 平面。
+                # ⚠ 2026-10-06 去掉底图切换后，**地图里已经没有任何地方读它**
+                #   （高德瓦片与相关坐标变换都删了）。留着是因为：
+                #     * 体积可忽略（每校区两个数）；
+                #     * `tools/test_e2e.py` 拿它当"数据完整性"的检查项；
+                #     * 万一以后要把在线卫星底图加回来，纠偏量是必须重算的，
+                #       留着省得又踩一次"点位整体飘 500 米"的坑。
                 "offsets": {
                     "street": list(gcj_offset_meters(*c.center)) if c.streets.gcj02 else [0.0, 0.0],
                     "image": list(gcj_offset_meters(*c.center)) if c.imagery.gcj02 else [0.0, 0.0],
@@ -513,10 +525,14 @@ body.embed #campusFloat{display:flex}
     <div id="campusFloat"></div>
     <button id="toggleSide">☰ 列表</button>
     <div id="topbar">
-      <button id="btnRelief">🏞 立体底图</button>
-      <button id="btnStreet">🗺 OSM 街道</button>
-      <button id="btnSat">🛰 高德卫星</button>
-      <button id="btnVector">⛰ 矢量底图</button>
+      <!-- 底图切换按钮（🏞 立体底图 / 🗺 OSM 街道 / 🛰 高德卫星 / ⛰ 矢量底图）
+           已按用户 2026-10-06 要求**全部去掉**：
+             * 现在只有一种底图 —— 与投稿页"选机位"完全同源的自绘立体图
+               （2026-10-05 统一的，见 _relief_dataurl 的注释）；
+             * 四个按钮摆在右上角，同学既不知道为什么要有它们，
+               也不清楚该选哪个 —— 是纯干扰。
+           矢量底图**没有删掉代码**，只是不再有入口：某个校区的立体图生成失败时
+           它仍然是兜底（否则那个校区会是一片空白）。 -->
       <button id="btnFit">⤢ 全览</button>
       <button id="btnTarget">🎯 鼠标定位</button>
       <button id="btnShare">🔗 复制当前视图</button>
@@ -534,9 +550,8 @@ body.embed #campusFloat{display:flex}
 const DATA = __PAYLOAD__;
 const OFFLINE = __OFFLINE__;
 let map, vectorLayer = null, currentCampus = 'all';
-let selSpots = [], markerBySid = {}, tileFails = 0, fellBack = false;
-let baseLayer = 'none';           // none | relief | street | image | vector
-let tileStreet = null, tileImage = null, reliefLayers = [];
+let selSpots = [], markerBySid = {}, reliefLayers = [];
+let baseLayer = 'none';           // none | relief | vector（矢量只在立体图不可用时兜底）
 
 const el = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -555,10 +570,9 @@ function initMap(){
 }
 
 function cfgOf(ck){ return DATA.campuses[ck === 'all' ? 'gulou' : ck]; }
-function offsetOf(which){
-  const o = (cfgOf(currentCampus).offsets || {})[which] || [0, 0];
-  return { x: o[0], y: o[1] };
-}
+/* （这里原来有个 offsetOf()：取 GCJ-02 纠偏量给高德瓦片和点位用。
+   2026-10-06 去掉底图切换后，高德瓦片没了、立体图本身也不需要纠偏，
+   它就成了没人调用的死函数，已删。） */
 
 /* ---------------- 外框（校园 + 周边缓冲）----------------
    框由后端按各校区实际建筑范围算出（aspect 自适应），这里只负责：
@@ -606,53 +620,15 @@ function frameRect(ck){
     {color:'#4a9eff', weight:1.5, dashArray:'7 5', fill:false, interactive:false});
 }
 
-/* 点位坐标变换：底图是高德（GCJ-02）时，把 WGS84 的点平移过去，
-   这样照片点位才压得准建筑；OSM / 矢量底图时原样返回。
-   注意：位置数据本身始终是 WGS84，这里只是显示层补偿。 */
+/* 点位坐标变换：**现在恒等**。
+   历史上这里要在底图是高德（GCJ-02）时把 WGS84 的点平移过去，否则照片点位
+   会整体偏 500 米。2026-10-06 去掉底图切换后只剩自绘立体图，而那张图与
+   `frame` 四角严丝合缝、本身就是 WGS84（见 _relief_dataurl 的注释），
+   **不需要任何纠偏** ⇒ 这里直接原样返回。
+   保留这个函数（而不是删掉、把十几处调用点都改成直传）是因为调用点很多
+   （标记、flyTo、setView…），恒等实现最不容易改错。 */
 function tp(lat, lon){
-  if(baseLayer !== 'image') return [lat, lon];
-  const o = offsetOf('image');
-  if(!o.x && !o.y) return [lat, lon];
-  const dLat = o.y / 111320;
-  const dLon = o.x / (111320 * Math.cos(lat * Math.PI / 180));
-  return [lat + dLat, lon + dLon];
-}
-
-/* 高德是高德坐标系（GCJ-02），必须把瓦片网格和点位一起平移，
-   否则照片点位会整体偏 500 米。这里在 getTileUrl 上做平面偏移。 */
-function gcjTileLayer(src, offset){
-  const T = L.TileLayer.extend({
-    getTileUrl(coords){
-      const z = this._getZoomForUrl();
-      if(!offset.x && !offset.y) return L.TileLayer.prototype.getTileUrl.call(this, coords);
-      const scale = Math.pow(2, z);
-      const cx = coords.x + (offset.x / (2 * Math.PI * 6378137) * scale);
-      const cy = coords.y - (offset.y / (2 * Math.PI * 6378137) * scale);
-      return L.Util.template(this._url, L.Util.extend({}, this.options, {
-        x: Math.round(cx), y: Math.round(cy), z: z,
-        s: this.options.subdomains[Math.abs(Math.round(cx) + Math.round(cy)) % this.options.subdomains.length],
-        r: L.Browser.retina ? '@2x' : ''
-      }));
-    }
-  });
-  const t = new T(src.url, {
-    maxZoom: src.maxZoom || 19, attribution: src.attr,
-    subdomains: src.subdomains || 'abc', noWrap: true,
-  });
-  t.on('tileerror', onTileError);
-  return t;
-}
-
-function onTileError(){
-  if(fellBack) return;
-  tileFails++;
-  // 瓦片加载不动时退到**自绘立体底图**（图片是内嵌的，不依赖网络），
-  // 比退到矢量底图更贴近投稿页的观感。
-  if(tileFails >= 3){
-    fellBack = true;
-    if(hasRelief()) { setBase('relief'); toast('在线瓦片加载失败，已自动切换为自绘立体底图'); }
-    else { setBase('vector'); toast('在线瓦片加载失败，已自动切换为矢量底图'); }
-  }
+  return [lat, lon];
 }
 
 function hasRelief(ck){
@@ -660,14 +636,13 @@ function hasRelief(ck){
   return keys.some(k => DATA.campuses[k] && DATA.campuses[k].relief);
 }
 
-function dropTiles(){
-  if(tileStreet && map.hasLayer(tileStreet)) map.removeLayer(tileStreet);
-  if(tileImage && map.hasLayer(tileImage)) map.removeLayer(tileImage);
+/* 清掉当前的立体底图图层（切校区/切底图时用）。
+   名字原来是 dropTiles（那时还要卸在线瓦片），现在没有瓦片了。 */
+function dropReliefLayers(){
   reliefLayers.forEach(l => { try { if(map.hasLayer(l)) map.removeLayer(l); } catch(e){} });
   reliefLayers = [];
   const m = document.getElementById('map');
   if(m) m.classList.remove('relief');
-  tileStreet = tileImage = null;
 }
 
 /* 自绘立体底图：把投稿页"选机位"用的**同一张图**按外框四角贴上去。
@@ -691,65 +666,41 @@ function addReliefLayers(){
 }
 
 function setBase(which){
-  if(which === 'street' && OFFLINE){ toast('离线版不含在线街道底图，请看矢量底图'); which = 'vector'; }
-  if(which === 'image' && OFFLINE){ toast('离线版不含在线影像底图，请看矢量底图'); which = 'vector'; }
-  // 该校区没有立体底图（生成失败）时退回矢量底图 —— 必须在 baseLayer = which
-  // **之前**判，否则 baseLayer 记的是 'relief' 而实际画的是矢量，按钮高亮会错位。
+  // 只剩两种可能：'relief'（唯一正式底图）与 'vector'（兜底）。
+  // 该校区没有立体底图（生成失败）时退到矢量底图 —— 总不能给同学一张空白图。
+  // ⚠ 这个判断必须在 `baseLayer = which` **之前**做，否则 baseLayer 记的是
+  //   'relief' 而实际画的是矢量，状态就与画面不一致了。
   if(which === 'relief' && !hasRelief(currentCampus)) which = 'vector';
-  if(baseLayer !== which) { dropTiles(); tileFails = 0; }
 
-  // 当前校区中心加上"底图坐标系补偿"，作为该底图下的视野中心
   const c = cfgOf(currentCampus).center;
-  const o = offsetOf('image');
-  const dLat = o.y / 111320;
-  const dLon = o.x / (111320 * Math.cos(c[0] * Math.PI / 180));
-  const off = (which === 'image') ? [dLat, dLon] : [0, 0];
   const wantZoom = map.getZoom();
   baseLayer = which;
 
   if(which === 'relief'){
     if(vectorLayer && map.hasLayer(vectorLayer)) map.removeLayer(vectorLayer);
     addReliefLayers();
-    map.setView([c[0], c[1]], wantZoom, {animate:false});
-  } else if(which === 'vector'){
-    if(vectorLayer && !map.hasLayer(vectorLayer)) vectorLayer.addTo(map);
-    map.setView([c[0] + off[0], c[1] + off[1]], wantZoom, {animate:false});
   } else {
-    if(vectorLayer && map.hasLayer(vectorLayer)) map.removeLayer(vectorLayer);
-    const src = which === 'street' ? cfgOf(currentCampus).streets : cfgOf(currentCampus).imagery;
-    const sh = offsetOf(which);
-    const t = gcjTileLayer(src, src.gcj02 ? sh : { x: 0, y: 0 });
-    t.addTo(map);
-    if(which === 'street') tileStreet = t; else tileImage = t;
-    map.setView([c[0] + off[0], c[1] + off[1]], wantZoom, {animate:false});
+    dropReliefLayers();
+    if(vectorLayer && !map.hasLayer(vectorLayer)) vectorLayer.addTo(map);
   }
-  updateBaseButtons();
+  map.setView([c[0], c[1]], wantZoom, {animate:false});
+  updateButtons();
 }
 
-function updateBaseButtons(){
-  const mark = (id, on, disabled) => {
-    const b = el(id); if(!b) return;
-    b.style.color = on ? 'var(--accent2)' : '';
-    b.disabled = !!disabled;
-    b.style.opacity = disabled ? .45 : 1;
-  };
-  mark('btnRelief', baseLayer === 'relief', !hasRelief(currentCampus));
-  mark('btnStreet', baseLayer === 'street', false);
-  mark('btnSat', baseLayer === 'image', false);
-  mark('btnVector', baseLayer === 'vector', false);
+/* 右上角按钮的**状态**刷新。
+   原来这里叫 updateBaseButtons、要给四个底图按钮打高亮；底图按钮去掉后
+   只剩「🎯 鼠标定位」的开关色。 */
+function updateButtons(){
   const bt = el('btnTarget');
   if(bt) bt.style.color = tracking ? '#c0392b' : '';
 }
 
-/* 矢量底图：用 OSM 建筑轮廓画深色 3D 风格底图，无网络也能看。
-   注意底图是高德卫星时会给建筑加同样的 GCJ-02 偏移，保证与影像对齐。 */
+/* 矢量底图：用 OSM 建筑轮廓画深色 3D 风格底图，**断网也能看**。
+   现在它没有按钮入口了 —— 只在某个校区的立体图生成失败时当兜底用。
+   坐标是 WGS84 原样（不再有"跟着高德影像一起平移"那回事，高德底图已去掉）。 */
 function buildVectorLayer(){
   vectorLayer = L.layerGroup();
-  const shift = baseLayer === 'image' ? offsetOf('image') : { x: 0, y: 0 };
-  const mv = (la, lo) => {
-    if(!shift.x && !shift.y) return [la, lo];
-    return [la + shift.y / 111320, lo + shift.x / (111320 * Math.cos(la * Math.PI / 180))];
-  };
+  const mv = (la, lo) => [la, lo];
   const all = currentCampus === 'all' ? Object.keys(DATA.buildings) : [currentCampus];
   all.forEach(ck => {
     const cfg = DATA.campuses[ck];
@@ -1078,10 +1029,7 @@ function buildControls(){
   }));
 
   el('q').addEventListener('input', debounce(()=>{ render(); syncHash(); }, 200));
-  el('btnRelief').onclick = () => { setBase('relief'); buildVectorLayer(); render(); renderNote(); };
-  el('btnStreet').onclick = () => { setBase('street'); buildVectorLayer(); renderNote(); };
-  el('btnSat').onclick    = () => { setBase('image');  buildVectorLayer(); render(); renderNote(); };
-  el('btnVector').onclick = () => { setBase('vector'); buildVectorLayer(); render(); renderNote(); };
+  // 底图切换按钮已去掉（2026-10-06），所以这里不再有 btnRelief/btnStreet/… 的处理。
   el('btnFit').onclick = fitAll;
   el('btnShare').onclick = copyView;
   el('btnTarget').onclick = toggleTracking;
@@ -1099,7 +1047,7 @@ function toggleTracking(){
     map.off('mousemove', onTrack);
     el('note').innerHTML = noteHtml();
   }
-  updateBaseButtons();
+  updateButtons();
 }
 function onTrack(e){
   el('note').innerHTML = `🧭 <b style="color:#c0392b">${e.latlng.lat.toFixed(6)}, ${e.latlng.lng.toFixed(6)}</b><br>` +
@@ -1110,17 +1058,13 @@ function noteHtml(){
   const cfg = cfgOf(currentCampus);
   if(tracking) return '';
   const parts = [];
-  if(baseLayer === 'image'){
-    const dz = cfg.offsets && cfg.offsets.image ? Math.hypot(cfg.offsets.image[0], cfg.offsets.image[1]) : 0;
-    if(dz > 1) parts.push(`🛰 当前为高德卫星底图（GCJ-02），已自动纠偏 ${dz.toFixed(0)} m，点位与影像对齐`);
-    else parts.push('🛰 当前为高德卫星底图');
-  } else if(baseLayer === 'street'){
-    parts.push('🗺 当前为 OSM 街道底图（WGS84 原始坐标，无需纠偏）');
-  } else if(baseLayer === 'relief'){
-    parts.push('🏞 当前为自绘立体底图（与投稿选机位时是同一张图）');
+  if(baseLayer === 'vector'){
+    // 只有"立体图生成失败"才会走到这里，所以要说明白，别让同学以为风格变了
+    parts.push('⛰ 矢量建筑底图（该校区立体底图不可用，断网也能看）');
   } else {
-    parts.push('⛰ 当前为矢量建筑底图（断网可用）');
+    parts.push('🏞 自绘立体底图（与投稿选机位时是同一张图）');
   }
+  if(OFFLINE) parts.push('📴 离线单文件版（不联网也能看）');
   if(cfg.accuracy === 'approx') parts.push(`⚠ ${cfg.short}校区地标坐标为估算值，请在卫星影像上校准`);
   if(DATA.unresolved && DATA.unresolved.length) parts.push(`待人工补录 ${DATA.unresolved.length} 幅`);
   return parts.join('<br>');
@@ -1156,7 +1100,7 @@ function switchCampus(key){
   document.querySelectorAll('#campusTabs .tab, #campusFloat .tab').forEach(x => {
     x.classList.toggle('on', x.dataset.campus === key);
   });
-  dropTiles();
+  dropReliefLayers();
   buildVectorLayer();
   setBase(baseLayer === 'none' ? 'relief' : baseLayer);
   if(baseLayer !== 'none'){

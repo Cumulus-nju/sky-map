@@ -92,8 +92,13 @@ def main() -> int:
         data = json.loads(m.group(1))
         check("JSON 里打卡点数一致", len(data["spots"]) == 3)
         check("每个打卡点都有照片", all(sp["shots"] and sp["shots"][0]["src"] for sp in data["spots"]))
-    check("含 GCJ 纠偏逻辑", "gcjTileLayer" in html and "__OFFSET__" not in html)
-    check("含点位坐标变换", "function tp(" in html)
+    # 2026-10-06：底图切换去掉后，在线瓦片与 GCJ 纠偏代码都删了（只剩自绘立体图，
+    # 它本身就是 WGS84、不需要纠偏）。判据相应改成"**不再有** GCJ 瓦片逻辑"，
+    # ⚠ 查的是定义/调用（`gcjTileLayer(`），不是裸名字 —— 生成出来的 JS 里留着
+    #   解释这件事的注释，注释里就会提到它（本项目为此误报过多次）。
+    check("已移除 GCJ 瓦片纠偏逻辑（只剩自绘立体底图）",
+          "gcjTileLayer(" not in html and "__OFFSET__" not in html)
+    check("点位坐标变换仍在（现在是恒等，保留以免改十几处调用点）", "function tp(" in html)
 
     print("\n[5] 无未定点遗漏")
     check("unresolved 为空", payload["unresolved"] == [], str(payload["unresolved"]))

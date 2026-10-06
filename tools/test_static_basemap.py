@@ -450,9 +450,22 @@ try:
     check("三校区：成品地图底图 == 选机位底图（逐字节）", not _bad, f"不一致：{_bad}")
 
     _html = _mb.render_html(_p, offline=False)
-    check("HTML 含立体底图图层 + 切换按钮 + 默认选它",
-          "function addReliefLayers" in _html and 'id="btnRelief"' in _html
-          and "setBase('relief')" in _html)
+    check("HTML 含立体底图图层 + 默认选它，且**已经没有底图切换按钮**",
+          "function addReliefLayers" in _html and "setBase('relief')" in _html)
+    # 用户 2026-10-06：右上角那四个底图按钮（立体/OSM街道/高德卫星/矢量）看着碍事，
+    # 实际只有一种图 ⇒ 全部去掉。这条断言防止日后有人"顺手"把按钮加回来。
+    # ⚠ 判据查的是**定义/调用形式**（`function X`、`X(`），不是裸标识符 ——
+    #   生成出来的 JS 里留着解释这件事的注释，注释里就会提到这些名字。
+    #   （本项目已经因为"判据把注释也算进去"误报过四次：placeholder、_nav_*、
+    #     link_button、这次的 updateBaseButtons。）
+    _stale = [b for b in ('id="btnRelief"', 'id="btnStreet"', 'id="btnSat"',
+                          'id="btnVector"', "function gcjTileLayer",
+                          "function updateBaseButtons", "function dropTiles",
+                          "function offsetOf")
+              if b in _html]
+    check("底图切换按钮与在线瓦片代码都已移除", not _stale, f"残留：{_stale}")
+    check("但「全览 / 鼠标定位 / 复制当前视图」三个功能按钮要留着",
+          all(f'id="{b}"' in _html for b in ("btnFit", "btnTarget", "btnShare")))
     # 立体图只盖住外框，框外没瓦片可铺 —— 底色必须是浅色，否则露出深色成"黑边"
     check("框外底色已改成浅灰（不然立体图四周是黑边）",
           "#map.relief{background:#e9ecef}" in _html)
