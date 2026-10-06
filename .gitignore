@@ -59,6 +59,11 @@ _page_*.png
 # 临时提交信息文件（别入库）
 _cm.txt
 _commit_msg.txt
+# ⚠ 2026-10-06 补：上面两个名字没覆盖到新变体，结果 `git add -A` 把
+# `_cm_wall.txt`（提交说明本身）提交进去了。用通配兜住所有临时稿。
+_cm*.txt
+_msg_*.txt
+_commit*.txt
 # 测试会临时生成小尺寸底图（w600/w700），属可再生中间产物，别入库
 data/frame_images/*_w600_*
 data/frame_images/*_w700_*
