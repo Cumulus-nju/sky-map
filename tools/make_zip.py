@@ -19,14 +19,16 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent.parent
 DIST = HERE / "dist"
 
-# 顶层要打的文件（不存在则跳过）
+# 顶层的 .py **用通配全部打进去**，不手写清单。
+# 为什么改（2026-10-06）：原来的手写清单漏了 frame_picker.py、relief_basemap.py、
+# photo_shrink.py、vote_store.py 等等 —— 漏文件时打包脚本**自己不报错**
+# （只是少打一个），但解压出来的包一运行就 ImportError，属于"发出去才发现"的那种坑。
+TOP_PY_GLOB = "*.py"
+
+# 顶层要打的非 .py 文件（不存在则跳过）
 TOP_FILES = (
     "使用指南.md", "README.md", "requirements.txt", "requirements-local.txt", ".gitignore",
     "打开网站.bat", "生成打卡点地图.bat", "抓取校区底图.bat", "清空示例数据.bat",
-    "环境自检.py",
-    "app.py", "site_common.py", "submit_app.py",
-    "map_build.py", "campus_config.py", "submission_data.py", "store.py", "photos.py",
-    "demo_data.py", "reset_data.py", "fetch_base.py",
 )
 # 顶层要一并打进去的整目录（保证 Streamlit 不会卡在首次邮箱提示、带上部署资料）
 TOP_DIRS = (".streamlit", "pages", "deploy")
@@ -34,6 +36,8 @@ TOOLS = (
     "test_submit.py", "test_e2e.py", "test_backend_agnostic.py",
     "check_store.py", "migrate_to_supabase.py",
     "check_tiles.py", "verify_align.py", "gcj_offset.py",
+    "test_photo_shrink.py", "test_static_basemap.py", "test_frame_fallback.py",
+    "test_key_formats.py", "test_vote.py", "test_vote_page.py",
 )
 # 运行时不需要，但有助于排查/复验，按需带
 TOOLS_OPTIONAL = (
@@ -90,6 +94,10 @@ def main() -> int:
 
     added = 0
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+        for src in sorted(HERE.glob(TOP_PY_GLOB)):
+            if src.is_file():
+                zf.write(src, f"{prefix}/{src.name}")
+                added += 1
         for f in TOP_FILES:
             src = HERE / f
             if src.exists():
