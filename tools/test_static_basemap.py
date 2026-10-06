@@ -466,6 +466,12 @@ try:
     check("底图切换按钮与在线瓦片代码都已移除", not _stale, f"残留：{_stale}")
     check("但「全览 / 鼠标定位 / 复制当前视图」三个功能按钮要留着",
           all(f'id="{b}"' in _html for b in ("btnFit", "btnTarget", "btnShare")))
+
+    # 侧栏那个单选的名字：用户 2026-10-06 指出「底图版本」会被误解成"换底图"，
+    # 而它改的是**照片怎么进 HTML**（相对路径 vs 内嵌），与底图无关 ⇒ 改名「导出方式」。
+    _page = (HERE / "pages" / "打卡点地图.py").read_text(encoding="utf-8")
+    check("侧栏单选叫「导出方式」（不再叫「底图版本」）",
+          'st.radio("导出方式"' in _page and 'st.radio("底图版本"' not in _page)
     # 立体图只盖住外框，框外没瓦片可铺 —— 底色必须是浅色，否则露出深色成"黑边"
     check("框外底色已改成浅灰（不然立体图四周是黑边）",
           "#map.relief{background:#e9ecef}" in _html)
