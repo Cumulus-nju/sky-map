@@ -22,15 +22,17 @@ if str(ROOT) not in sys.path:
 SITE = "天光云影 · 打卡点地图"
 SUBMIT_PAGE = "投稿"
 MAP_PAGE = "打卡点地图"
+VOTE_PAGE = "作品投票"
 ADMIN_PAGE = "管理员"
 
 # 构建版本：显示在侧边栏，用来确认线上部署的是哪一版。
 # 改代码时**一起改这个**，push 后刷新线上即可确认是否真的更新了。
-BUILD = "2026-10-04k"
+BUILD = "2026-10-06a"
 
 # 页面文件（Streamlit 按文件路由：根目录 app.py = "/"，pages/ 下的各占一个路径）
 SUBMIT_FILE = "app.py"
 MAP_FILE = "pages/打卡点地图.py"
+VOTE_FILE = "pages/投票.py"
 ADMIN_FILE = "pages/管理员.py"
 
 # 查询参数

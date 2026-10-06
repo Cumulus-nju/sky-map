@@ -7,6 +7,12 @@ data/admin.json
 data/.submit.lock
 data/tile_check/
 
+# 投票数据（2026-10-06 新增）：本地后端的票箱。**里面存着投票人姓名明文**
+# 与学号/手机号的加盐哈希 —— 既是个人数据，也绝不能进仓库。
+# （云端投票走 Supabase 的 voters/votes 表，本来就不落文件。）
+data/votes.json
+data/votes.json.tmp
+
 # 云端密钥绝不入库
 .streamlit/secrets.toml
 deploy/secrets.toml

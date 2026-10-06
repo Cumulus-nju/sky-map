@@ -150,9 +150,38 @@ with st.expander("🔌 存储自检（读 + 写探针）"):
 subs = load_submissions()
 pending = [s for s in subs if s.loc_verify or not s.has_point]
 
+# ---- 投票模块（2026-10-06 新增）----
+# 单独兜一层错：投票表还没建（没执行最新的 supabase_schema.sql）时会报 404，
+# 而**后台其余功能不能因此整个打不开** —— 审核投稿是主功能，投票是附加的。
+_vote_err = ""
+vote_cfg = None
+vote_store = None
+_vote_stats = {"voters": 0, "votes": 0}
+# 一次取齐，渲染期间不再重取：每多调一次就是一次到 Supabase 的往返，
+# 而且分两次取会让侧边栏的数字与页签里的表格来自**不同快照**、看起来自相矛盾。
+# 撤销 / 清空之后都会 st.rerun()，那时自然重新取。
+_vote_voters: list = []
+_vote_tally: dict = {}
+_vote_flow: list = []
+try:
+    import vote_config as vote_cfg          # noqa: F401
+    import vote_store as _vs
+
+    vote_store = _vs.get_vote_store()
+    _vote_voters = vote_store.voter_rows()
+    _vote_tally = vote_store.tally()
+    _vote_flow = vote_store.vote_rows()
+    _vote_stats["voters"] = len(_vote_voters)
+    _vote_stats["votes"] = sum(_vote_tally.values())
+except Exception as exc:
+    _vote_err = f"{type(exc).__name__}: {exc}"
+
 with st.sidebar:
     st.metric("总投稿", f"{len(subs)} 幅")
     st.metric("待复核", f"{len(pending)} 幅")
+    if not _vote_err:
+        st.metric("投票人数", f"{_vote_stats['voters']} 人")
+        st.metric("总票数", f"{_vote_stats['votes']} 票")
     st.divider()
     if st.button("退出登录", use_container_width=True):
         S.logout()
@@ -163,8 +192,9 @@ st.markdown("## 🔧 投稿管理")
 st.caption("可以修改位置与文字、删除稿件、校正待复核的点位。所有改动即时写入 "
            "`data/submissions.jsonl`，之后到「🗺 打卡点地图」页刷新即可看到效果。")
 
-tab_review, tab_edit, tab_table = st.tabs(
-    [f"⚠️ 待复核（{len(pending)}）", "✏️ 逐条修改", "📋 总表 / 批量删除"]
+tab_review, tab_edit, tab_table, tab_vote = st.tabs(
+    [f"⚠️ 待复核（{len(pending)}）", "✏️ 逐条修改", "📋 总表 / 批量删除",
+     f"🗳 人气投票（{_vote_stats['votes']}）"]
 )
 
 
@@ -407,3 +437,161 @@ with tab_table:
                     export_csv(load_submissions())
             st.success("地图已重新生成，去「🗺 打卡点地图」页看效果。")
             st.code(buf.getvalue() or "完成")
+
+
+# ---------------------------------------------------------------- 人气投票
+#
+# 这一栏是**唯一能看到票数的地方** —— 同学端的投票墙在截止前只显示
+# "已投/未投"，不显示任何票数（用户 2026-10-06 定的规则），
+# 否则会出现"谁领先就投谁"的滚雪球。所以这里要做得能查、能导出、能纠错。
+with tab_vote:
+    st.subheader("🗳 人气投票")
+
+    if _vote_err:
+        st.error(
+            f"投票数据读不出来：{_vote_err}\n\n"
+            "**如果状态码是 404**：`voters` / `votes` 表还没建 —— 去 Supabase 的 "
+            "SQL Editor 执行 `deploy/supabase_schema.sql`（文件末尾那段「人气投票」）。\n\n"
+            "**如果是 401/403**：密钥不是 `service_role`。"
+        )
+        st.stop()
+
+    # ---- 状态 ----
+    wstate = vote_cfg.window_state()
+    c1, c2, c3 = st.columns([2, 1, 1])
+    with c1:
+        st.markdown(f"**时间窗**：{vote_cfg.window_text(wstate)}")
+        if vote_cfg.VOTE_MODE != "auto":
+            st.warning(f"⚠️ 规则里的 `VOTE_MODE = \"{vote_cfg.VOTE_MODE}\"` —— "
+                       "这是**手工开关**（调试用），记得改回 `\"auto\"`。")
+    with c2:
+        st.metric("投票人数", f"{_vote_stats['voters']} 人")
+    with c3:
+        st.metric("总票数", f"{_vote_stats['votes']} 票")
+    st.caption(f"投票存储：{vote_store.describe()} · "
+               f"每人上限 {vote_cfg.VOTES_PER_PERSON} 票 · "
+               f"上墙条件：状态 = 「{vote_cfg.ELIGIBLE_STATUS}」且非示例数据")
+
+    # ---- 上墙管理 ----
+    st.divider()
+    st.subheader("① 上墙管理")
+    eligible = [s for s in subs if (s.status or "") == vote_cfg.ELIGIBLE_STATUS and not s.is_demo]
+    st.caption(f"当前上墙 **{len(eligible)}** 幅。只有状态被标成"
+               f"「{vote_cfg.ELIGIBLE_STATUS}」的投稿才会出现在投票墙上，"
+               "示例数据永不进墙。")
+    candidates = [s for s in subs if not s.is_demo and (s.status or "") != vote_cfg.ELIGIBLE_STATUS]
+    picks = st.multiselect(
+        "把初筛通过的作品标记为已入围（可多选）",
+        [s.sid for s in candidates],
+        format_func=lambda x: next(f"{x} · {y.title or '未命名'}" for y in candidates if y.sid == x),
+        key="vote_eligible_pick",
+    )
+    b1, b2 = st.columns([1, 3])
+    with b1:
+        if st.button(f"✅ 标记入围（{len(picks)}）", disabled=not picks, type="primary"):
+            from submission_data import save_submissions
+
+            all_subs = load_submissions()
+            want = set(picks)
+            for s in all_subs:
+                if s.sid in want:
+                    s.status = vote_cfg.ELIGIBLE_STATUS
+            save_submissions(all_subs)
+            st.success(f"已把 {len(want)} 幅标记为「{vote_cfg.ELIGIBLE_STATUS}」")
+            st.rerun()
+    with b2:
+        st.write("")
+        st.caption("上墙/下架都改「状态」字段；下架把状态改成别的即可。")
+
+    # ---- 票数排行 ----
+    st.divider()
+    st.subheader("② 票数排行")
+    tally = _vote_tally
+    by_sid = {s.sid: s for s in subs}
+    rank_rows = []
+    for i, (work, n) in enumerate(sorted(tally.items(), key=lambda kv: (-kv[1], kv[0])), 1):
+        s = by_sid.get(work)
+        rank_rows.append({
+            "名次": i,
+            "作品": (s.title if s else "") or "（作品已删除）",
+            "编号": work,
+            "票数": n,
+            "校区": _campus_short(s.campus) if s else "",
+            "状态": s.status if s else "",
+        })
+    if rank_rows:
+        st.dataframe(rank_rows, use_container_width=True, hide_index=True, height=380)
+    else:
+        st.info("还没有任何投票。")
+
+    # ---- 投票人明细 ----
+    st.divider()
+    st.subheader("③ 投票人明细")
+    st.caption("学号与手机号在库里**只存加盐哈希**，这里显示掩码；"
+               "**姓名存明文**（核对身份要用），但只在后台可见、投票墙上从不显示。")
+    voters_rows = _vote_voters
+    if voters_rows:
+        st.dataframe([{k: v for k, v in r.items() if k != "uid"} for r in voters_rows],
+                     use_container_width=True, hide_index=True, height=320)
+    else:
+        st.info("还没有人投票。")
+
+    # ---- 流水 + 导出 ----
+    st.divider()
+    st.subheader("④ 投票流水 / 导出")
+    flow = _vote_flow
+    if flow:
+        st.dataframe([{k: v for k, v in r.items() if k != "uid"} for r in flow],
+                     use_container_width=True, hide_index=True, height=320)
+        import csv as _csv
+        import io as _io
+
+        buf = _io.StringIO()
+        cols = ["作品", "昵称", "姓名", "学号", "时间"]
+        wr = _csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
+        wr.writeheader()
+        wr.writerows(flow)
+        e1, e2 = st.columns(2)
+        with e1:
+            st.download_button("⬇️ 导出投票流水 CSV",
+                               buf.getvalue().encode("utf-8-sig"),
+                               file_name="人气投票_流水.csv", mime="text/csv")
+        with e2:
+            buf2 = _io.StringIO()
+            cols2 = ["昵称", "姓名", "学号", "手机号", "票数", "投票作品", "首次时间"]
+            wr2 = _csv.DictWriter(buf2, fieldnames=cols2, extrasaction="ignore")
+            wr2.writeheader()
+            wr2.writerows(voters_rows)
+            st.download_button("⬇️ 导出投票人 CSV",
+                               buf2.getvalue().encode("utf-8-sig"),
+                               file_name="人气投票_投票人.csv", mime="text/csv")
+    else:
+        st.info("还没有投票流水。")
+
+    # ---- 纠错 ----
+    st.divider()
+    st.subheader("⑤ 撤销异常投票")
+    st.caption("投票截止后同学自己不能改票，但**管理员随时可以**"
+               "（发现组织刷票、身份填错时用）。")
+    if flow:
+        labels = [f"{r['昵称'] or '（无昵称）'} · {r['学号']} → {r['作品']} · {r['时间']}"
+                  for r in flow]
+        idx = st.selectbox("选择要撤销的一条投票", range(len(labels)),
+                           format_func=lambda i: labels[i], key="vote_revoke_pick")
+        if st.button("🗑 撤销这一票", type="primary"):
+            target = flow[idx]
+            res = vote_store.admin_retract(uid=target["uid"], work=target["作品"])
+            if res.get("ok"):
+                st.success(f"已撤销：{target['昵称']} → {target['作品']}")
+            else:
+                st.error(res.get("text") or "撤销失败")
+            st.rerun()
+
+    with st.expander("☢️ 危险操作：清空全部投票"):
+        st.caption("把所有投票与投票人记录一并删除，**不可撤销**。"
+                   "正式征稿前的测试投票用这个清。")
+        sure = st.checkbox("我确认要清空全部投票记录", key="vote_clear_confirm")
+        if st.button("清空全部投票", disabled=not sure, type="primary"):
+            n = vote_store.clear_all()
+            st.warning(f"已清空（原有 {n} 条投票记录）")
+            st.rerun()
