@@ -321,8 +321,14 @@ def do_retract(work) -> None:
 # ---------------------------------------------------------------- 页面
 
 st.markdown("## 🗳 人气投票")
+# 这里原来还有一行状态说明：
+#     st.caption(C.window_text(state) + " · 每人 3 票 · 只展示已入围作品")
+# 用户 2026-10-06 要求删掉。它本来也是**重复信息**：
+#   * "投票尚未开始 / 已结束" 下面那个 st.info 会单独提示（还更详细，带日期）；
+#   * "每人 3 票、必须投给不同作品" 写在身份区标题里；
+#   * 完整规则在页面底部的「📖 投票规则」里。
+# `state` 变量本身还要用（下面 not_open 的分支），所以只删这行、不删上面那句。
 state = C.window_state()
-st.caption(C.window_text(state) + f" · 每人 {C.VOTES_PER_PERSON} 票 · 只展示已入围作品")
 
 show_flash()
 
@@ -425,26 +431,44 @@ if current is not None:
 # ---- ③ 筛选 + 作品网格 ----
 st.markdown("### ③ 作品陈列墙")
 
-f1, f2, f3 = st.columns(3)
+f1, f2 = st.columns(2)
 with f1:
-    camp_opts = ["全部"] + sorted({w.campus for w in items if w.campus})
-    camp = st.selectbox("校区", camp_opts, key="v_camp")
-with f2:
-    wx_opts = ["全部"] + sorted({(w.weather or "").strip() for w in items if (w.weather or "").strip()})
-    wx = st.selectbox("天象", wx_opts, key="v_wx")
-with f3:
-    order = st.selectbox("排序", ["最新投稿", "编号"], key="v_order")
+    # ⚠ 这一行原来有两个坑（2026-10-06 用户报"只显示 suzhou"）：
+    #   1. **没转中文**：选项用的是内部英文 key，下拉里就直愣愣显示 "suzhou"。
+    #      必须过 `campus_name()`（读 CAMPUSES 的 short = 鼓楼/仙林/苏州）。
+    #   2. **选项是现从作品里取的**（`{w.campus for w in items}`）⇒ 当作品全都
+    #      标在苏州校区时，下拉里就只剩一个 "suzhou" —— 看着像功能坏了，
+    #      其实只是"别的校区还没有入围作品"。
+    #   改成：**固定列出三个校区**（顺序跟 CAMPUSES 一致：鼓楼/仙林/苏州），
+    #   并在括号里带上作品数 —— 这样"哪个校区还没作品"一眼可见，
+    #   不会再有"怎么只有一个选项"的困惑。
+    _camp_count = {k: sum(1 for w in items if w.campus == k) for k in CAMPUSES}
+    camp_opts = ["全部"] + list(CAMPUSES)
 
-view = [w for w in items
-        if (camp == "全部" or w.campus == camp)
-        and (wx == "全部" or (w.weather or "").strip() == wx)]
+    def _camp_label(k: str) -> str:
+        if k == "全部":
+            return f"全部（{len(items)}）"
+        return f"{campus_name(k)}（{_camp_count.get(k, 0)}）"
+
+    camp = st.selectbox("校区", camp_opts, format_func=_camp_label, key="v_camp")
+with f2:
+    order = st.selectbox("排序", ["最新投稿", "编号"], key="v_order")
+# 「天象」筛选已按用户要求去掉（2026-10-06）：作品墙按天象筛没什么人用，
+# 反而占掉筛选行的位置。**天象本身没删** —— 作品详情里照旧显示
+# 「天象：晚霞」，只是不再拿它当筛选条件。
+# 顺带把上一版留在会话里的 v_wx 清掉，免得它一直挂在 session_state 里。
+st.session_state.pop("v_wx", None)
+
+view = [w for w in items if (camp == "全部" or w.campus == camp)]
 if order == "编号":
     view.sort(key=lambda w: w.sid)
 else:
     view.sort(key=lambda w: (w.submitted_at or "", w.sid), reverse=True)
 
 if not view:
-    st.info("当前筛选条件下没有作品。")
+    st.info("当前筛选条件下没有作品。"
+            + ("该校区还没有入围作品 —— 换个校区看看。"
+               if camp != "全部" else ""))
     st.stop()
 
 pages = max(1, (len(view) + PAGE_SIZE - 1) // PAGE_SIZE)

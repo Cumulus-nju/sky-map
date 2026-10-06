@@ -119,9 +119,27 @@ check("示例作品**不**上墙（否则同学给假图投票）", "示例作�
 check("有身份确认提示", "先确认身份" in body)
 check("隐私：页面不出现投稿人姓名", "张三" not in body)
 check("隐私：页面不出现联系方式", "13800138000" not in body)
-check("显示了投票时间窗", "投票进行中" in body or "尚未开始" in body)
+check("顶部那行状态说明已按用户要求删掉（不再重复）",
+      "只展示已入围作品" not in body and "投票进行中" not in body)
 
 # ---------------------------------------------------------------- [2] 身份确认
+# ---------------------------------------------------------------- [1b] 筛选行
+print("\n[1b] 筛选行：校区必须是中文、且三个校区都列出来；天象筛选已去掉")
+sels = {s.label: s for s in at.selectbox}
+check("有两个下拉（校区 / 排序）", len(sels) == 2, f"{list(sels)}")
+_camp_sel = next((s for lb, s in sels.items() if "校区" in lb), None)
+check("有校区下拉", _camp_sel is not None, f"{list(sels)}")
+if _camp_sel is not None:
+    opts = [str(o) for o in _camp_sel.options]
+    # 用户报过 bug："只显示 suzhou" —— 原因是选项直接用内部英文 key 且没转中文
+    check("下拉里不再出现英文 key（gulou/xianlin/suzhou）",
+          not any(o in ("gulou", "xianlin", "suzhou") for o in opts), f"{opts}")
+    check("三个校区都列出来了（鼓楼/仙林/苏州）",
+          all(any(n in o for o in opts) for n in ("鼓楼", "仙林", "苏州")), f"{opts}")
+    check("有「全部」选项", any("全部" in o for o in opts), f"{opts}")
+check("「天象」筛选已去掉（不再有以天象为标签的下拉）",
+      not any("天象" in lb for lb in sels), f"{list(sels)}")
+
 print("\n[2] 身份确认表单（姓名 + 学号 + 手机号 三重认证）")
 inputs = {i.label: i for i in at.text_input}
 check("只有 3 个输入框（姓名/学号/手机号）", len(at.text_input) == 3,
