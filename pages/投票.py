@@ -199,8 +199,7 @@ def identity_bar() -> tuple[bool, str, set[str]]:
         with st.container(border=True):
             c1, c2 = st.columns([4, 1])
             with c1:
-                st.markdown(f"**✅ 已确认身份：{st.session_state.get('v_name', '')}**"
-                            f"（昵称 {st.session_state.get('v_nick', '')}）")
+                st.markdown(f"**✅ 已确认身份：{st.session_state.get('v_name', '')}**")
                 st.caption(
                     f"学号 `{st.session_state.get('v_sid_mask', '')}` · "
                     f"手机 `{st.session_state.get('v_phone_mask', '')}` · "
@@ -209,7 +208,7 @@ def identity_bar() -> tuple[bool, str, set[str]]:
                 )
             with c2:
                 if st.button("切换身份", use_container_width=True, key="v_logout"):
-                    for k in ("v_uid", "v_nick", "v_name", "v_sid", "v_phone",
+                    for k in ("v_uid", "v_name", "v_sid", "v_phone",
                               "v_sid_mask", "v_phone_mask"):
                         st.session_state.pop(k, None)
                     st.rerun()
@@ -223,18 +222,22 @@ def identity_bar() -> tuple[bool, str, set[str]]:
         # 删掉不丢信息：隐私口径与"每次都要填得完全一致"都写在页面底部
         # 收起的「📖 投票规则」里；而真填错时，报错文案本身也会提示
         # "请用同一组信息投票（三项都要和第一次填的一模一样）"。
+        #
+        # ⚠ 输入框**不写 placeholder**（用户 2026-10-06 要求"框框里面不要预写东西"）：
+        #   标签已经写清要填什么，框里再塞示例反而像已经填好了。
+        # ⚠ 昵称字段已按用户要求**去掉**：它原来只是给后台认人用的，
+        #   而现在姓名字段本身就存了明文、后台看得到 —— 昵称完全冗余。
         with st.form("vote_identity"):
-            f1, f2, f3, f4 = st.columns(4)
-            name = f1.text_input("姓名", max_chars=20, placeholder="真实姓名")
-            sid = f2.text_input("学号 / 工号", placeholder="如 20220001")
-            phone = f3.text_input("手机号", max_chars=20, placeholder="11 位")
-            nick = f4.text_input("昵称", max_chars=20, placeholder="投票记录里显示")
+            f1, f2, f3 = st.columns(3)
+            name = f1.text_input("姓名", max_chars=20)
+            sid = f2.text_input("学号 / 工号")
+            phone = f3.text_input("手机号", max_chars=20)
             ok = st.form_submit_button("确认身份", type="primary",
                                        use_container_width=True)
         if ok:
             errs = []
             for fn, val in ((V.valid_name, name), (V.valid_sid, sid),
-                            (V.valid_phone, phone), (V.valid_nick, nick)):
+                            (V.valid_phone, phone)):
                 good, msg = fn(val)
                 if not good:
                     errs.append(msg)
@@ -243,7 +246,6 @@ def identity_bar() -> tuple[bool, str, set[str]]:
             else:
                 new_uid, _, _ = V.identity(sid, phone, name)
                 st.session_state["v_uid"] = new_uid
-                st.session_state["v_nick"] = nick.strip()
                 st.session_state["v_name"] = V.norm_name(name)
                 st.session_state["v_sid"] = V.norm_sid(sid)
                 st.session_state["v_phone"] = V.norm_phone(phone)
@@ -280,7 +282,12 @@ def do_cast(work) -> None:
             sid=st.session_state.get("v_sid", ""),
             phone=st.session_state.get("v_phone", ""),
             name=st.session_state.get("v_name", ""),
-            nick=st.session_state.get("v_nick", ""),
+            # 昵称字段已按用户要求去掉（2026-10-06）。这里仍然传空串而不是删掉
+            # 这个参数：`cast()` 的 nick 一路通到 Postgres 函数 `cast_vote(...)`
+            # 的参数列表，而线上**已经执行过那段 SQL** —— 改签名会让
+            # `create or replace function` 变成"新增一个重载"而不是替换，
+            # PostgREST 会因函数歧义报错。留着这个参数是无害的（永远是空串）。
+            nick="",
             work=work.sid,
         )
     except Exception as exc:

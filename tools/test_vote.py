@@ -294,6 +294,13 @@ check("有模块版本自检（防云端「新页面 + 旧模块」）", "VOTE_A
 check("身份表单里有姓名一栏", "姓名" in page and "V.valid_name" in page)
 check("姓名参与校验（必填且不得为纯数字）", "valid_name" in page)
 check("投票时把姓名一起送交核对", 'name=st.session_state.get("v_name"' in page)
+# 用户 2026-10-06 的两条要求。
+# ⚠ 判据要查**真正的调用**（`placeholder=`）而不是这个词本身 ——
+#   第一版写成 `"placeholder" not in page`，结果被我自己那句
+#   "输入框不写 placeholder" 的注释判成失败（测试的判据把注释也算进去了）。
+check("输入框里不预写提示文字（没有 placeholder= 参数）", "placeholder=" not in page)
+check("昵称字段已移除（页面不再采集）",
+      "v_nick" not in page and 'text_input("昵称"' not in page)
 
 admin = (HERE / "pages" / "管理员.py").read_text(encoding="utf-8")
 check("后台有人气投票页签", "人气投票" in admin)

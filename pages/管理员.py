@@ -528,10 +528,15 @@ with tab_vote:
     st.divider()
     st.subheader("③ 投票人明细")
     st.caption("学号与手机号在库里**只存加盐哈希**，这里显示掩码；"
-               "**姓名存明文**（核对身份要用），但只在后台可见、投票墙上从不显示。")
+               "**姓名存明文**（核对身份要用），但只在后台可见、投票墙上从不显示。"
+               "昵称字段已于 2026-10-06 停止采集，故不再列出。")
     voters_rows = _vote_voters
+    # 昵称列不再展示（页面已不采集，永远是空串，留着只是噪音）。
+    # ⚠ 数据层的 `nick` 参数**保留**：它通到 Postgres 函数参数列表，
+    # 改签名会让已执行的 SQL 变成"函数重载"、PostgREST 报歧义。
+    _hide = ("uid", "nick")
     if voters_rows:
-        st.dataframe([{k: v for k, v in r.items() if k != "uid"} for r in voters_rows],
+        st.dataframe([{k: v for k, v in r.items() if k not in _hide} for r in voters_rows],
                      use_container_width=True, hide_index=True, height=320)
     else:
         st.info("还没有人投票。")
@@ -541,13 +546,13 @@ with tab_vote:
     st.subheader("④ 投票流水 / 导出")
     flow = _vote_flow
     if flow:
-        st.dataframe([{k: v for k, v in r.items() if k != "uid"} for r in flow],
+        st.dataframe([{k: v for k, v in r.items() if k not in _hide} for r in flow],
                      use_container_width=True, hide_index=True, height=320)
         import csv as _csv
         import io as _io
 
         buf = _io.StringIO()
-        cols = ["作品", "昵称", "姓名", "学号", "时间"]
+        cols = ["作品", "姓名", "学号", "时间"]
         wr = _csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
         wr.writeheader()
         wr.writerows(flow)
@@ -558,7 +563,7 @@ with tab_vote:
                                file_name="人气投票_流水.csv", mime="text/csv")
         with e2:
             buf2 = _io.StringIO()
-            cols2 = ["昵称", "姓名", "学号", "手机号", "票数", "投票作品", "首次时间"]
+            cols2 = ["姓名", "学号", "手机号", "票数", "投票作品", "首次时间"]
             wr2 = _csv.DictWriter(buf2, fieldnames=cols2, extrasaction="ignore")
             wr2.writeheader()
             wr2.writerows(voters_rows)

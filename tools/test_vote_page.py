@@ -124,24 +124,23 @@ check("显示了投票时间窗", "投票进行中" in body or "尚未开始" in
 # ---------------------------------------------------------------- [2] 身份确认
 print("\n[2] 身份确认表单（姓名 + 学号 + 手机号 三重认证）")
 inputs = {i.label: i for i in at.text_input}
-check("有 4 个输入框（姓名/学号/手机号/昵称）", len(at.text_input) == 4,
+check("只有 3 个输入框（姓名/学号/手机号）", len(at.text_input) == 3,
       f"实际 {[i.label for i in at.text_input]}")
 check("有姓名输入框", any("姓名" in lb for lb in inputs))
 check("有学号输入框", any("学号" in lb for lb in inputs))
 check("有手机号输入框", any("手机号" in lb for lb in inputs))
+check("昵称字段已按用户要求移除", not any("昵称" in lb for lb in inputs), f"{list(inputs)}")
 
 
-def fill_identity(name: str, sid: str, phone: str, nick: str = "小明") -> None:
+def fill_identity(name: str, sid: str, phone: str) -> None:
     for i in at.text_input:
         lb = i.label
         if "姓名" in lb:
             i.set_value(name)
         elif "学号" in lb:
             i.set_value(sid)
-        elif "手机号" in lb:
-            i.set_value(phone)
         else:
-            i.set_value(nick)
+            i.set_value(phone)
 
 
 # 先试一组非法输入：必须被拒，且人还在"未确认"状态
@@ -174,7 +173,6 @@ check("合法信息提交后无异常", not at.exception,
 body = page_text(at)
 check("确认后显示已确认身份", "已确认身份" in body, body[:200])
 check("确认后显示投票人自己的姓名", "王五" in body, body[:200])
-check("确认后显示昵称", "小明" in body)
 check("确认后显示已投 0 票", "0 / 3" in body, body[:400])
 check("确认后不再显示登记表单", "先确认身份" not in body)
 check("隐私：投稿作者姓名仍然不出现", "张三" not in body)
@@ -259,7 +257,8 @@ rows = vote_store.voter_rows()
 check("后台能列出投票人", len(rows) == 1, str(rows))
 check("投票人明细带姓名（后台要能核对身份）",
       bool(rows) and rows[0].get("姓名") == "王五", str(rows[:1]))
-check("投票人明细带昵称", bool(rows) and rows[0].get("昵称") == "小明", str(rows[:1]))
+check("昵称已停止采集（页面不要了，库里是空串）",
+      bool(rows) and rows[0].get("昵称") == "", str(rows[:1]))
 check("投票人明细是掩码不是明文",
       bool(rows) and rows[0]["手机号"] == "138****8000", str(rows[:1]))
 check("投票人明细显示 3 票", bool(rows) and rows[0]["票数"] == 3, str(rows[:1]))
