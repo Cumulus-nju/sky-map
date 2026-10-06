@@ -139,6 +139,25 @@ def work_place(w) -> str:
     return (w.loc_matched or w.loc_text or "").strip() or "未标注机位"
 
 
+@st.cache_data(show_spinner=False, ttl=60)
+def vote_backend_ok() -> tuple[bool, str]:
+    """投票用的两张表到底能不能用。
+
+    为什么要预检：云端最常见的部署失误是**忘了到 Supabase 跑一遍
+    `deploy/supabase_schema.sql`**（表不存在 ⇒ 404）。不预检的话，同学要一直
+    填完身份、点下投票，才看到一个裸的 "HTTP 404"；预检能提前把话说清楚。
+    `ttl=60` 是为了配好之后不用重启就能恢复。
+    """
+    store = V.get_vote_store()
+    ping = getattr(store, "ping", None)
+    if ping is None:
+        return True, ""          # 本地后端没有 ping，也不需要
+    try:
+        return ping()
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
 # ---------------------------------------------------------------- 身份
 
 
@@ -298,7 +317,15 @@ if not items:
     )
     st.stop()
 
-identified, uid, mine = identity_bar()
+# 投票后端预检：跑不通就只给一句人话，并且**不显示身份表单与投票按钮**
+# （让同学填完一整套信息再撞一个 404 是最糟的体验）。作品照样能浏览。
+backend_ok, backend_why = vote_backend_ok()
+if not backend_ok:
+    st.warning("投票功能暂时不可用，作品仍可正常浏览。请稍后再来，或联系主办方。",
+               icon="🛠")
+    identified, uid, mine = False, "", set()
+else:
+    identified, uid, mine = identity_bar()
 
 # ---- 截止后公示结果（用真实时间，不看手工开关）----
 if already_closed:
@@ -347,6 +374,8 @@ if current is not None:
             vouched = current.sid in mine
             if already_closed:
                 st.info("投票已截止。")
+            elif not backend_ok:
+                st.info("投票暂时不可用，请稍后再试。")
             elif not identified:
                 st.info("请先在上方**确认身份**，然后就能投票了。")
             elif vouched:

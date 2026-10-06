@@ -312,6 +312,41 @@ check("给出同学看得懂的说明", "整理中" in body, body[:200])
 check("不向同学暴露后台操作指引", "管理后台" not in body and "标记为已入围" not in body,
       body[:200])
 
+
+# ---------------------------------------------------------------- [8] 忘了跑 SQL
+class BrokenVoteStore(V.LocalVoteStore):
+    """模拟"云端部署时忘了到 Supabase 跑一遍 supabase_schema.sql"：
+
+    表不存在 ⇒ PostgREST 返回 404。这是本项目**最容易发生**的部署失误，
+    不预检的话同学要填完一整套身份、点下投票才看到一个裸的 HTTP 404。
+    """
+
+    kind = "broken"
+
+    def ping(self):
+        raise RuntimeError("HTTP 404 · voters · relation \"public.voters\" does not exist")
+
+    def cast(self, **kw):
+        raise RuntimeError("HTTP 404 · rpc/cast_vote · function does not exist")
+
+
+print("\n[8] 投票表没建好时：给同学一句人话，而不是裸的 404")
+sub_store.write_submissions([
+    make_work(sub_store, sid="P0001", title="晚霞下的北大楼", status=C.ELIGIBLE_STATUS),
+    make_work(sub_store, sid="P0002", title="梧桐缝隙里的云", status=C.ELIGIBLE_STATUS),
+])
+V.get_vote_store(force=BrokenVoteStore(TMP / "broken.json"))
+at = run_page()
+check("后端报错时页面不崩", not at.exception,
+      str(at.exception)[:300] if at.exception else "")
+body = page_text(at)
+check("告诉同学「暂时不可用」", "暂时不可用" in body, body[:200])
+check("不显示身份登记表单（别让同学白填一整套）", "先确认身份" not in body, body[:200])
+check("作品仍然可以正常浏览", "晚霞下的北大楼" in body, body[:200])
+check("不出现裸的技术报错（relation/does not exist）",
+      "does not exist" not in body and "relation" not in body, body[:200])
+V.get_vote_store(force=vote_store)
+
 print("\n" + "=" * 66)
 if FAILS:
     print(f"✗ {len(FAILS)} 项失败：")
