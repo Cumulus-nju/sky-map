@@ -207,11 +207,8 @@ def identity_bar() -> tuple[bool, str, set[str]]:
                     + ("　🎉 票已用完，可撤回后改投" if used >= C.VOTES_PER_PERSON else "")
                 )
             with c2:
-                if st.button("切换身份", use_container_width=True, key="v_logout"):
-                    for k in ("v_uid", "v_name", "v_sid", "v_phone",
-                              "v_sid_mask", "v_phone_mask"):
-                        st.session_state.pop(k, None)
-                    st.rerun()
+                st.button("切换身份", use_container_width=True, key="v_logout",
+                          on_click=logout_cb)
         return True, uid, mine
 
     with st.container(border=True):
@@ -227,31 +224,20 @@ def identity_bar() -> tuple[bool, str, set[str]]:
         #   标签已经写清要填什么，框里再塞示例反而像已经填好了。
         # ⚠ 昵称字段已按用户要求**去掉**：它原来只是给后台认人用的，
         #   而现在姓名字段本身就存了明文、后台看得到 —— 昵称完全冗余。
+        # 校验错误由 identity_cb 回调写进 session_state，这里取出来显示
+        # （回调里直接 st.error 的渲染不可靠）
+        _form_err = st.session_state.pop("v_form_err", "")
+        if _form_err:
+            st.error(_form_err)
         with st.form("vote_identity"):
             f1, f2, f3 = st.columns(3)
-            name = f1.text_input("姓名", max_chars=20)
-            sid = f2.text_input("学号 / 工号")
-            phone = f3.text_input("手机号", max_chars=20)
-            ok = st.form_submit_button("确认身份", type="primary",
-                                       use_container_width=True)
-        if ok:
-            errs = []
-            for fn, val in ((V.valid_name, name), (V.valid_sid, sid),
-                            (V.valid_phone, phone)):
-                good, msg = fn(val)
-                if not good:
-                    errs.append(msg)
-            if errs:
-                st.error(" ".join(errs))
-            else:
-                new_uid, _, _ = V.identity(sid, phone, name)
-                st.session_state["v_uid"] = new_uid
-                st.session_state["v_name"] = V.norm_name(name)
-                st.session_state["v_sid"] = V.norm_sid(sid)
-                st.session_state["v_phone"] = V.norm_phone(phone)
-                st.session_state["v_sid_mask"] = V.mask_sid(sid)
-                st.session_state["v_phone_mask"] = V.mask_phone(phone)
-                st.rerun()
+            # 三个输入框都给**显式 key**：回调要在脚本重跑之前读到它们的值，
+            # 没有 key 的 widget 值按自动生成的键存放，回调里取不到。
+            f1.text_input("姓名", max_chars=20, key="v_name_in")
+            f2.text_input("学号 / 工号", key="v_sid_in")
+            f3.text_input("手机号", max_chars=20, key="v_phone_in")
+            st.form_submit_button("确认身份", type="primary",
+                                  use_container_width=True, on_click=identity_cb)
     return False, "", set()
 
 
@@ -282,7 +268,9 @@ def show_flash() -> None:
         pass   # 老版本 Streamlit 没有 st.toast，忽略（顶部那条仍然在）
 
 
-def do_cast(work) -> None:
+def cast_action(work) -> None:
+    """执行投票 + 写提示。**故意不重跑** —— 它是按钮的 `on_click` 回调，
+    回调跑完之后 Streamlit 自己会重跑一次脚本。见下面那段说明。"""
     store = V.get_vote_store()
     try:
         res = store.cast(
@@ -299,30 +287,99 @@ def do_cast(work) -> None:
         )
     except Exception as exc:
         flash("warn", f"投票失败：{type(exc).__name__}: {exc}")
-        st.rerun()
         return
     if res.get("ok"):
         flash("ok", f"投票成功！你已投 {res['used']}/{C.VOTES_PER_PERSON} 票"
                     + ("，票已用完。" if res["left"] == 0 else f"，还剩 {res['left']} 票。"))
     else:
         flash("warn", res.get("text") or "投票没有成功。")
-    st.rerun()
 
 
-def do_retract(work) -> None:
+def retract_action(work) -> None:
+    """撤回一票 + 写提示。同样**不重跑**（理由见下）。"""
     store = V.get_vote_store()
     try:
         res = store.retract(uid=st.session_state.get("v_uid", ""), work=work.sid)
     except Exception as exc:
         flash("warn", f"撤回失败：{type(exc).__name__}: {exc}")
-        st.rerun()
         return
     if res.get("ok"):
         flash("ok", f"已撤回对「{work_title(work)}」的投票，"
                     f"现在已投 {res['used']}/{C.VOTES_PER_PERSON} 票。")
     else:
         flash("warn", res.get("text") or "撤回没有成功。")
-    st.rerun()
+
+
+# ---------------------------------------------------------------- 按钮回调
+#
+# ⚠⚠ **这个页面里的按钮一律用 `on_click=` 回调，不许写成
+#     `if st.button(...): 做事; st.rerun()`。**
+#
+# 为什么（2026-10-06 用户报："点完投票之后，页面会闪一下，然后突然多一行
+# 一样的图片，然后又闪回正常，有点奇怪"）：
+#   那种写法在 Streamlit 里会**跑两遍脚本** ——
+#     第 1 遍：点击触发的重跑。脚本一路渲染到那个按钮、拿到 True、执行动作，
+#             然后 `st.rerun()` 把这一遍**从中间打断**。而前端这时已经收到了
+#             "渲染到一半"的元素（半截的作品网格 = 多出来的那一行图片）；
+#     第 2 遍：完整重画一遍 ⇒ 肉眼就是"闪一下 + 多一行一样的图 + 闪回去"。
+#   改成 `on_click=` 之后，回调在**脚本重跑之前**执行，
+#   **一次点击 = 一次完整的脚本执行**，不存在半截渲染。
+#
+# ⇒ 副作用是个很好的自检点：**本文件里不应该再出现 `st.rerun()`**，
+#   由 `tools/test_vote.py` 静态钉住（免得日后又顺手写回去）。
+
+
+def open_work_cb(sid: str) -> None:
+    st.session_state["v_open"] = sid
+
+
+def close_work_cb() -> None:
+    # 页面上读的是 `st.session_state.get("v_open") or ""`，塞空串就等于"没选"
+    st.session_state["v_open"] = ""
+
+
+def page_cb(delta: int) -> None:
+    """翻页：只改原始页码，越界由脚本里的夹取逻辑兜（不在这里判断 pages）。"""
+    cur = int(st.session_state.get("v_page", 1) or 1)
+    st.session_state["v_page"] = cur + int(delta)
+
+
+def reload_cb() -> None:
+    wall_items.clear()
+    wall_thumb.clear()
+
+
+def logout_cb() -> None:
+    for k in ("v_uid", "v_name", "v_sid", "v_phone", "v_sid_mask", "v_phone_mask"):
+        st.session_state.pop(k, None)
+
+
+def identity_cb() -> None:
+    """「确认身份」表单的提交回调。
+
+    ⚠ 校验失败**不能**在这里 `st.error(...)` —— 回调里调 st.* 的渲染不可靠
+    （它跑在脚本之前，元素不一定会出现在页面上）。改成把错误写进
+    session_state，由脚本渲染时取出显示（见 identity_bar）。
+    """
+    name = st.session_state.get("v_name_in", "")
+    sid = st.session_state.get("v_sid_in", "")
+    phone = st.session_state.get("v_phone_in", "")
+    errs = []
+    for fn, val in ((V.valid_name, name), (V.valid_sid, sid), (V.valid_phone, phone)):
+        good, msg = fn(val)
+        if not good:
+            errs.append(msg)
+    if errs:
+        st.session_state["v_form_err"] = " ".join(errs)
+        return
+    st.session_state.pop("v_form_err", None)
+    new_uid, _, _ = V.identity(sid, phone, name)
+    st.session_state["v_uid"] = new_uid
+    st.session_state["v_name"] = V.norm_name(name)
+    st.session_state["v_sid"] = V.norm_sid(sid)
+    st.session_state["v_phone"] = V.norm_phone(phone)
+    st.session_state["v_sid_mask"] = V.mask_sid(sid)
+    st.session_state["v_phone_mask"] = V.mask_phone(phone)
 
 
 # ---------------------------------------------------------------- 页面
@@ -420,20 +477,18 @@ if current is not None:
                 st.info("请先在上方**确认身份**，然后就能投票了。")
             elif vouched:
                 st.success("你已经投过这幅作品。")
-                if st.button("↩️ 撤回这一票", use_container_width=True,
-                             key=f"ret_{current.sid}"):
-                    do_retract(current)
+                st.button("↩️ 撤回这一票", use_container_width=True,
+                          key=f"ret_{current.sid}",
+                          on_click=retract_action, args=(current,))
             elif len(mine) >= C.VOTES_PER_PERSON:
                 st.warning(f"你的 {C.VOTES_PER_PERSON} 票已经用完了。"
                            "想改投，先撤回一票（在上面或已投的作品里）。")
             else:
                 left = C.VOTES_PER_PERSON - len(mine)
-                if st.button(f"👍 投这一票（还剩 {left} 票）", type="primary",
-                             use_container_width=True, key=f"cast_{current.sid}"):
-                    do_cast(current)
-        if st.button("收起", key="v_close"):
-            st.session_state.pop("v_open", None)
-            st.rerun()
+                st.button(f"👍 投这一票（还剩 {left} 票）", type="primary",
+                          use_container_width=True, key=f"cast_{current.sid}",
+                          on_click=cast_action, args=(current,))
+        st.button("收起", key="v_close", on_click=close_work_cb)
 
 # ---- ③ 筛选 + 作品网格 ----
 st.markdown("### ③ 作品陈列墙")
@@ -504,9 +559,9 @@ for i, w in enumerate(chunk):
         # 两个按钮**竖着排**而不是并排：手机上一行 3 张卡片，卡片里再分两列
         # 每个按钮只剩 ~55px，字会挤成一条缝。
         if voted:
-            if st.button("↩️ 撤回这一票", key=f"card_ret_{w.sid}",
-                         use_container_width=True, help="撤回你对这幅作品的投票"):
-                do_retract(w)
+            st.button("↩️ 撤回这一票", key=f"card_ret_{w.sid}",
+                      use_container_width=True, help="撤回你对这幅作品的投票",
+                      on_click=retract_action, args=(w,))
         elif not backend_ok:
             st.button("👍 投票", key=f"card_cast_{w.sid}", disabled=True,
                       use_container_width=True, help="投票功能暂时不可用")
@@ -517,13 +572,12 @@ for i, w in enumerate(chunk):
             st.button("👍 投票", key=f"card_cast_{w.sid}", disabled=True,
                       use_container_width=True, help=f"{C.VOTES_PER_PERSON} 票已用完，可先撤回一票")
         else:
-            if st.button(f"👍 投票（还剩 {_votes_left} 票）", key=f"card_cast_{w.sid}",
-                         use_container_width=True):
-                do_cast(w)
+            st.button(f"👍 投票（还剩 {_votes_left} 票）", key=f"card_cast_{w.sid}",
+                      use_container_width=True,
+                      on_click=cast_action, args=(w,))
 
-        if st.button("查看", key=f"open_{w.sid}", use_container_width=True):
-            st.session_state["v_open"] = w.sid
-            st.rerun()
+        st.button("查看", key=f"open_{w.sid}", use_container_width=True,
+                  on_click=open_work_cb, args=(w.sid,))
 
 # ---- 翻页与刷新：统一放在**作品列表底部**（用户 2026-10-06 要求）
 # 以前放在列表上方 —— 但翻页这个动作发生在"看完这一屏之后"，
@@ -533,23 +587,19 @@ for i, w in enumerate(chunk):
 st.divider()
 _b1, _b2 = st.columns(2)
 with _b1:
-    if st.button("← 上一页", disabled=(page <= 1), use_container_width=True, key="v_prev"):
-        st.session_state["v_page"] = page - 1
-        st.rerun()
+    st.button("← 上一页", disabled=(page <= 1), use_container_width=True, key="v_prev",
+              on_click=page_cb, args=(-1,))
 with _b2:
-    if st.button("下一页 →", disabled=(page >= pages), use_container_width=True, key="v_next"):
-        st.session_state["v_page"] = page + 1
-        st.rerun()
+    st.button("下一页 →", disabled=(page >= pages), use_container_width=True, key="v_next",
+              on_click=page_cb, args=(1,))
 
 _b3, _b4 = st.columns([3, 1])
 with _b3:
     st.caption(f"第 {page} / {pages} 页 · 共 {len(view)} 幅作品"
                + ("" if pages > 1 else "（已全部显示）"))
 with _b4:
-    if st.button("🔄 刷新", use_container_width=True, key="v_reload"):
-        wall_items.clear()
-        wall_thumb.clear()
-        st.rerun()
+    st.button("🔄 刷新", use_container_width=True, key="v_reload",
+              on_click=reload_cb)
 
 with st.expander("📖 投票规则"):
     st.markdown(

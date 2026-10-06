@@ -307,6 +307,20 @@ check("投票时把姓名一起送交核对", 'name=st.session_state.get("v_name
 check("输入框里不预写提示文字（没有 placeholder= 参数）", "placeholder=" not in page)
 check("昵称字段已移除（页面不再采集）",
       "v_nick" not in page and 'text_input("昵称"' not in page)
+# ⚠ 按钮一律走 on_click 回调，页面里**不该再有 st.rerun()**。
+# 有 st.rerun() 的地方就是 `if st.button(...): 做事; st.rerun()` 那种写法，
+# 它会让一次点击跑两遍脚本、第一遍在半路被打断 ⇒ 用户看到
+# "闪一下 + 多一行一样的图片"（2026-10-06 实际报过）。
+# 判据要**排除注释行**：说明这个坑的注释里就写着 st.rerun()。
+_code_lines = [ln for ln in page.splitlines() if not ln.strip().startswith("#")]
+check("页面里不再有 st.rerun()（按钮全走 on_click 回调）",
+      not any("st.rerun()" in ln for ln in _code_lines),
+      str([ln.strip() for ln in _code_lines if "st.rerun()" in ln][:3]))
+check("投票/撤回确实是按钮回调（on_click=cast_action / retract_action）",
+      "on_click=cast_action" in page and "on_click=retract_action" in page)
+check("回调里不做重跑（cast_action / retract_action 内无 st.rerun）",
+      "st.rerun()" not in page.split("def cast_action")[1].split("def ")[0]
+      and "st.rerun()" not in page.split("def retract_action")[1].split("# ----")[0])
 
 admin = (HERE / "pages" / "管理员.py").read_text(encoding="utf-8")
 check("后台有人气投票页签", "人气投票" in admin)
