@@ -119,8 +119,8 @@ check("开窗瞬间 = open", C.window_state(C.VOTE_OPEN_AT) == "open")
 check("窗口中间 = open", C.window_state(C.VOTE_OPEN_AT + timedelta(days=1)) == "open")
 check("关窗瞬间 = open（含端点）", C.window_state(C.VOTE_CLOSE_AT) == "open")
 check("关窗后 = closed", C.window_state(C.VOTE_CLOSE_AT + timedelta(seconds=1)) == "closed")
-check("按用户要求：10-07 开、11-30 关",
-      C.VOTE_OPEN_AT.strftime("%Y-%m-%d") == "2026-10-07"
+check("按用户要求：10-06 开、11-30 关",
+      C.VOTE_OPEN_AT.strftime("%Y-%m-%d") == "2026-10-06"
       and C.VOTE_CLOSE_AT.strftime("%Y-%m-%d") == "2026-11-30",
       f"{C.VOTE_OPEN_AT:%Y-%m-%d} → {C.VOTE_CLOSE_AT:%Y-%m-%d}")
 check("每人 3 票（用户定稿）", C.VOTES_PER_PERSON == 3, str(C.VOTES_PER_PERSON))
@@ -226,13 +226,19 @@ rc = st3.cast(sid="20220001", phone="13800138000", name="张三", nick="x", work
 check("强制关闭时投票被后端拒", (not rc["ok"]) and rc["reason"] == "closed", str(rc))
 check("被拒不产生记录", st3.tally() == {} and st3.voter_rows() == [])
 C.VOTE_MODE = "auto"
-# 用真实时间窗：如果现在还没到 10-07，这一票也必须被拒
-if C.now_cn() < C.VOTE_OPEN_AT:
+# 构造"还没到开窗时间"：把 VOTE_OPEN_AT 临时推到明天，而不是写
+# `if C.now_cn() < C.VOTE_OPEN_AT` —— 那种"看今天几号"的分支，一旦窗口提前
+# 或推后就会**静默走 else**，这段覆盖悄没声地没了（2026-10-06 把开窗从 10-07
+# 提前到 10-06 时正好撞上：当天 09:00 就已经在窗口内了）。
+_open_bak = C.VOTE_OPEN_AT
+C.VOTE_OPEN_AT = C.now_cn() + timedelta(days=1)
+try:
     rn = st3.cast(sid="20220001", phone="13800138000", name="张三", nick="x", work="P0001")
     check("未到开窗时间，auto 模式下后端也拒", (not rn["ok"]) and rn["reason"] == "not_open", str(rn))
+    check("被拒不产生记录", st3.tally() == {})
     check("撤回同样受时间窗限制", st3.retract(uid="x", work="P0001")["reason"] == "not_open")
-else:
-    check("（当前已在窗口内，跳过 not_open 用例）", True)
+finally:
+    C.VOTE_OPEN_AT = _open_bak
 
 C.VOTE_MODE = "open"
 ok_r = st3.cast(sid="20220001", phone="13800138000", name="张三", nick="x", work="P0001")

@@ -10,7 +10,8 @@
 隔离措施（很重要，绝不能碰项目里真实的投稿与投票）：
     * 投稿 → 指到临时目录的 `LocalStore`；
     * 投票 → 指到临时目录的 `LocalVoteStore`；
-    * 时间窗 → 强制 `VOTE_MODE="open"`（今天 10-06，真实窗口 10-07 才开）。
+    * 时间窗 → 需要 not_open 的用例会把 `VOTE_OPEN_AT` 临时推到明天，
+      不依赖"今天恰好还没开窗"（窗口改过一次就把那种分支架空过）。
 
 用法：$env:PYTHONIOENCODING="utf-8"; python tools\\test_vote_page.py
 """
@@ -20,6 +21,7 @@ import io
 import json
 import sys
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
@@ -258,16 +260,39 @@ if retract_btns:
     check("重新投票后又是 2 票", vote_store.tally() == {"P0001": 1, "P0002": 1},
           str(vote_store.tally()))
 
-# ---------------------------------------------------------------- [4b] 上限
-print("\n[4b] 第 3 票用掉之后，第 4 票必须被拦住（页面上也要拦）")
-check("能投第 3 票（P0005）", vote_for("P0005"))
-check("显示已投满 3 / 3", "3 / 3" in page_text(at), page_text(at)[:300])
+# ---------------------------------------------------------------- [4b] 墙上投票
+print("\n[4b] 在陈列墙上**直接**投票（不用先点进「查看」）+ 投满后的拦截")
+# 回到列表（收起详情面板）。
+# ⚠ 不能写 `at.session_state.pop(...)`：AppTest 的 session_state 是**只读转发**的
+#   代理，没有 pop/update 这类方法（会抛 "pop not found in session_state"）。
+#   页面上读的是 `st.session_state.get("v_open") or ""`，所以塞空串就等于"没选"。
+at.session_state["v_open"] = ""
+st.cache_data.clear()
+at.run()
+wall = [(b.label, b.disabled) for b in at.button if "投票" in b.label]
+check("陈列墙的卡片上直接有投票按钮", bool(wall),
+      f"{[(b.label, b.disabled) for b in at.button]}")
+usable = [b for b in at.button if "投票" in b.label and not b.disabled]
+check("还剩 1 票时有两幅可选（P0005 / P0006）", len(usable) == 2, f"{wall}")
+if usable:
+    usable[0].click().run()
+    t = vote_store.tally()
+    check("在墙上点一下就投上了（没进详情页）", sum(t.values()) == 3, str(t))
+    check("投的是网格第一幅（按投稿时间倒序 ⇒ P0006）", t.get("P0006") == 1, str(t))
+check("已投的卡片上给的是「撤回」而不是投票按钮",
+      any("撤回" in b.label for b in at.button),
+      f"{[(b.label, b.disabled) for b in at.button]}")
+check("投满后剩余的投票按钮变为不可用",
+      all(b.disabled for b in at.button if "投票" in b.label),
+      f"{[(b.label, b.disabled) for b in at.button]}")
+check("页面显示已投满 3 / 3", "3 / 3" in page_text(at), page_text(at)[:300])
+
 open_work("P0006")
 body = page_text(at)
-check("票用完后不再给投票按钮", not any("投这一票" in b.label for b in at.button),
+check("详情里票用完后也不再给投票按钮",
+      not any("投这一票" in b.label for b in at.button),
       f"{[b.label for b in at.button]}")
-check("票用完后给出「先撤回一票」的提示", "撤回" in body, body[:400])
-check("数据层也确实只有 3 票", sum(vote_store.tally().values()) == 3, str(vote_store.tally()))
+check("详情里给出「先撤回一票」的提示", "撤回" in body, body[:400])
 
 # ---------------------------------------------------------------- [5] 后台看得见
 print("\n[5] 后台能看到票数（前台看不到）")
@@ -281,12 +306,12 @@ check("投票人明细是掩码不是明文",
       bool(rows) and rows[0]["手机号"] == "138****8000", str(rows[:1]))
 check("投票人明细显示 3 票", bool(rows) and rows[0]["票数"] == 3, str(rows[:1]))
 check("投票人明细列出所投作品",
-      bool(rows) and all(x in rows[0]["投票作品"] for x in ("P0001", "P0002", "P0005")),
+      bool(rows) and all(x in rows[0]["投票作品"] for x in ("P0001", "P0002", "P0006")),
       str(rows[:1]))
 check("明细里没有明文手机号",
       not any("13800138000" in json.dumps(r, ensure_ascii=False) for r in rows))
 check("票数排行能算出来",
-      vote_store.tally() == {"P0001": 1, "P0002": 1, "P0005": 1}, str(vote_store.tally()))
+      vote_store.tally() == {"P0001": 1, "P0002": 1, "P0006": 1}, str(vote_store.tally()))
 flow = vote_store.vote_rows()
 check("流水条数 = 总票数", len(flow) == 3, f"{len(flow)} 条")
 check("流水里也带姓名", bool(flow) and all(r.get("姓名") == "王五" for r in flow),
@@ -297,14 +322,23 @@ check("流水按时间升序（后台排查看得懂）",
 
 # ---------------------------------------------------------------- [6] 未开始
 print("\n[6] 未到窗口时：页面提示且后端拒投")
+# 构造"还没到开窗时间"：把 VOTE_OPEN_AT 临时推到明天。
+# ⚠ 别写成 `if C.now_cn() < C.VOTE_OPEN_AT` 那种"看今天几号"的分支 ——
+#   窗口一提前/推后就会**静默走 else**，覆盖没了也不报警
+#   （2026-10-06 把开窗从 10-07 提前到 10-06 时正好撞上）。
 C.VOTE_MODE = "auto"
-if C.now_cn() < C.VOTE_OPEN_AT:
+_open_bak = C.VOTE_OPEN_AT
+C.VOTE_OPEN_AT = C.now_cn() + timedelta(days=1)
+try:
     at = run_page()
     body = page_text(at)
     check("页面提示投票尚未开始", "投票还没开始" in body or "尚未开始" in body, body[:200])
     check("未开始时不显示投票按钮",
           not any("投这一票" in b.label for b in at.button),
           f"{[b.label for b in at.button]}")
+    check("未开始时墙上的投票按钮也不可用",
+          all(b.disabled for b in at.button if "投票" in b.label),
+          f"{[(b.label, b.disabled) for b in at.button]}")
     check("未开始时预览作品仍然可以（不拦浏览）", "晚霞下的北大楼" in body)
     res = vote_store.cast(sid="20220001", phone="13800138000", name="王五",
                           nick="小明", work="P0002")
@@ -313,8 +347,8 @@ if C.now_cn() < C.VOTE_OPEN_AT:
           vote_store.cast(sid="20220001", phone="13800138000", name="赵六",
                           nick="小明", work="P0002")["reason"] in ("not_open", "identity_mismatch"),
           "先受时间窗拦，窗口内则会被姓名不符拦住")
-else:
-    check("（当前已在窗口内，跳过未开始用例）", True)
+finally:
+    C.VOTE_OPEN_AT = _open_bak
 C.VOTE_MODE = "open"
 
 # ---------------------------------------------------------------- [7] 空场景

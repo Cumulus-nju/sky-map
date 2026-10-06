@@ -273,6 +273,13 @@ def show_flash() -> None:
         return
     kind, text = item
     (st.success if kind == "ok" else st.warning)(text)
+    # 再在屏幕角落弹一下：卡片上的投票按钮在**页面下方**，投完会 rerun，
+    # 而顶部这条 success 很可能不在视野里 —— 同学会以为没投上。
+    # `st.toast` 固定在角落，和滚动位置无关。
+    try:
+        st.toast(text, icon="✅" if kind == "ok" else "⚠️")
+    except Exception:
+        pass   # 老版本 Streamlit 没有 st.toast，忽略（顶部那条仍然在）
 
 
 def do_cast(work) -> None:
@@ -478,6 +485,7 @@ st.session_state["v_page"] = page
 
 chunk = view[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
 cols = st.columns(NCOL)
+_votes_left = max(0, C.VOTES_PER_PERSON - len(mine))
 for i, w in enumerate(chunk):
     with cols[i % NCOL]:
         img = work_thumb(w)
@@ -485,11 +493,35 @@ for i, w in enumerate(chunk):
             st.image(img, use_container_width=True)
         else:
             st.caption("（照片读取失败）")
-        voted = "　✅已投" if w.sid in mine else ""
-        st.markdown(f"**{work_title(w)}**{voted}")
+        voted = w.sid in mine
+        st.markdown(f"**{work_title(w)}**" + ("　✅已投" if voted else ""))
         st.caption(f"{campus_name(w.campus)} · {work_place(w)}")
-        label = "查看" + ("（已投）" if w.sid in mine else "")
-        if st.button(label, key=f"open_{w.sid}", use_container_width=True):
+
+        # ---- 直接在卡片上投票（用户 2026-10-06 要求：不用先点进「查看」）----
+        # ⚠ key 必须与详情面板里的区分开（那边用 `cast_`/`ret_`）：同一个作品
+        #   同时在网格和详情面板里出现时，key 撞了会直接抛
+        #   StreamlitDuplicateElementKey 把整页搞崩。
+        # 两个按钮**竖着排**而不是并排：手机上一行 3 张卡片，卡片里再分两列
+        # 每个按钮只剩 ~55px，字会挤成一条缝。
+        if voted:
+            if st.button("↩️ 撤回这一票", key=f"card_ret_{w.sid}",
+                         use_container_width=True, help="撤回你对这幅作品的投票"):
+                do_retract(w)
+        elif not backend_ok:
+            st.button("👍 投票", key=f"card_cast_{w.sid}", disabled=True,
+                      use_container_width=True, help="投票功能暂时不可用")
+        elif not identified:
+            st.button("👍 投票", key=f"card_cast_{w.sid}", disabled=True,
+                      use_container_width=True, help="请先在上方确认身份，然后就能投票")
+        elif _votes_left <= 0:
+            st.button("👍 投票", key=f"card_cast_{w.sid}", disabled=True,
+                      use_container_width=True, help=f"{C.VOTES_PER_PERSON} 票已用完，可先撤回一票")
+        else:
+            if st.button(f"👍 投票（还剩 {_votes_left} 票）", key=f"card_cast_{w.sid}",
+                         use_container_width=True):
+                do_cast(w)
+
+        if st.button("查看", key=f"open_{w.sid}", use_container_width=True):
             st.session_state["v_open"] = w.sid
             st.rerun()
 
