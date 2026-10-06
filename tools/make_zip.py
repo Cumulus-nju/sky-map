@@ -37,11 +37,13 @@ TOOLS = (
     "check_store.py", "migrate_to_supabase.py",
     "check_tiles.py", "verify_align.py", "gcj_offset.py",
     "test_photo_shrink.py", "test_static_basemap.py", "test_frame_fallback.py",
-    "test_key_formats.py", "test_vote.py", "test_vote_page.py",
+    "test_key_formats.py", "test_vote.py", "test_vote_page.py", "test_nav.py",
 )
 # 运行时不需要，但有助于排查/复验，按需带
 TOOLS_OPTIONAL = (
     "cdp_check.mjs", "cdp_basemap.mjs", "cdp_markers.mjs", "cdp_measure.mjs", "check_gcj.mjs",
+    # 按手机尺寸给几个页面各截一张图 —— 移动端排版**只有看图才知道**对不对
+    "cdp_phone_shots.mjs",
 )
 
 SKIP_DIRS = {"__pycache__", ".ipynb_checkpoints", "photos", "tile_check", ".streamlit"}

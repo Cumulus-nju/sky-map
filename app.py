@@ -286,6 +286,12 @@ def report_save_failure(exc: Exception, upload) -> None:
 
 def main() -> None:
     S.nav(S.SUBMIT_PAGE)
+    # 正文最上方的页面导航条：手机上侧边栏是收起的，光靠它同学找不到
+    # 「打卡点地图」和「作品投票」（2026-10-06 用户提的问题）。
+    # ⚠ 用 hasattr 兜底：云端只改 .py 时可能出现"新入口脚本 + 旧 site_common"
+    #   （2026-10-06 投票页就这么整页崩过一次），旧模块里没有 top_nav。
+    if hasattr(S, "top_nav"):
+        S.top_nav(S.SUBMIT_PAGE)
 
     # 云端模块状态自检：campus_config 不是完整新版时给出**可见**提示。
     # 这样"线上加载了旧模块"会自己说出来，而不是等某个页面崩掉才发现。

@@ -98,6 +98,11 @@ def embed_map(html: str, height: int = 820) -> None:
 
 # ---------------- 侧边栏 ----------------
 S.nav(S.MAP_PAGE)
+# 正文最上方的页面导航条：手机上侧边栏是收起的，同学很难发现别的页面。
+# ⚠ 用 hasattr 兜底：云端只改 .py 时可能出现"新页面 + 旧 site_common"
+#   （2026-10-06 投票页就这么整页崩过一次），旧模块里没有 top_nav。
+if hasattr(S, "top_nav"):
+    S.top_nav(S.MAP_PAGE)
 
 subs = load_submissions()
 demo_on = S.demo_mode()

@@ -27,7 +27,7 @@ ADMIN_PAGE = "管理员"
 
 # 构建版本：显示在侧边栏，用来确认线上部署的是哪一版。
 # 改代码时**一起改这个**，push 后刷新线上即可确认是否真的更新了。
-BUILD = "2026-10-06b"
+BUILD = "2026-10-06c"
 
 # 页面文件（Streamlit 按文件路由：根目录 app.py = "/"，pages/ 下的各占一个路径）
 SUBMIT_FILE = "app.py"
@@ -156,12 +156,80 @@ def nav(current: str) -> None:
 
     这里只保留站点名，以及**管理后台入口**（登录后才出现，避免同学误入）。
     `current` 参数保留只为兼容调用方。
+
+    ⚠ **手机端光靠侧边栏是不够的**（2026-10-06 用户提的）—— 见 `top_nav()`。
     """
     st.sidebar.markdown(f"### 🌤 {SITE}")
     if is_admin():
         st.sidebar.divider()
         st.sidebar.page_link(ADMIN_FILE, label="🔧 管理后台", icon=None,
                              help="审核、修改、删除投稿")
+
+
+# 同学端要展示的页面（顺序 = 显示顺序）。**刻意不含管理后台** ——
+# 那是登录后才该出现的入口（侧边栏里已经有）。
+NAV_ITEMS = (
+    (SUBMIT_FILE, "📝", SUBMIT_PAGE),
+    (MAP_FILE, "🗺", MAP_PAGE),
+    (VOTE_FILE, "🗳", VOTE_PAGE),
+)
+
+
+def _page_url(path: str) -> str:
+    """页面文件 → URL（只给兜底链接用）。
+
+    Streamlit 按文件名路由：入口脚本 `app.py` 是 `/`，`pages/X.py` 是 `/X`。
+    """
+    if path == SUBMIT_FILE:
+        return "/"
+    name = path.split("/")[-1]
+    return "/" + (name[:-3] if name.endswith(".py") else name)
+
+
+def top_nav(current: str = "") -> None:
+    """同学端**正文最上方**的页面导航条。
+
+    为什么需要它（用户 2026-10-06 提："手机端的边栏太不明显，
+    感觉未必能注意到怎么进入投票界面和地图界面"）：
+      2026-10-05 为了不让侧边栏压住地图（`stSidebar` 的 z-index 极高、
+      会把触屏事件全接走），把 `initial_sidebar_state` 从写死的 `"expanded"`
+      改成了 `"auto"` —— 宽屏展开、**窄屏（手机）自动收起**。
+      于是手机上打开只看到「投稿」页，另外两个页面全靠左上角那个小小的
+      `›` 箭头，绝大多数同学不会去点。
+    ⇒ 在正文最上方放一排**看得见**的入口。
+
+    用 `st.page_link` 而不是 `st.link_button`：
+      `page_link` 是 SPA 内跳转，**保留 session_state**；而 `link_button` 是
+      真的整页跳转 ⇒ 会开一个新会话 ⇒ 同学刚确认好的投票身份就没了。
+
+    ⚠ **每个链接都单独兜底**：`st.page_link` 只认「入口脚本 + `pages/` 目录」
+    这个页面注册表，注册表里没有的路径会抛 `StreamlitPageNotFoundError`。
+    实测（2026-10-06）：
+      * 生产环境（入口 = `app.py`）三个路径都在注册表里 ⇒ 正常（已用真机尺寸
+        截图逐页确认）；
+      * 而 AppTest 把 `pages/投票.py` 当入口时，`app.py` 就不在注册表里 ⇒ 抛错。
+    一个导航组件**绝不该有本事把整页搞崩**，所以这里逐项 try，失败就退回一个
+    普通相对链接（代价是整页刷新、会话状态会丢 —— 但它只是兜底，
+    正常路径永远不会走到）。
+    """
+    if not hasattr(st, "page_link") or not hasattr(st, "columns"):
+        return          # 老版本 Streamlit：静默跳过（侧边栏导航仍然在）
+    with st.container(border=True):
+        # 提示语**不提"侧边栏"**：那是实现细节，同学看了只会困惑
+        # （第一版写的是"手机上侧边栏是收起的，点这里切换"，太啰嗦）。
+        st.caption("📍 **页面导航**（点一下切换）")
+        cols = st.columns(len(NAV_ITEMS))
+        for col, (path, icon, name) in zip(cols, NAV_ITEMS):
+            here = (name == current)
+            label = f"{name}（当前）" if here else name
+            help_text = "你正在这个页面" if here else f"去「{name}」"
+            with col:
+                try:
+                    st.page_link(path, label=label, icon=icon,
+                                 use_container_width=True, help=help_text)
+                except Exception:
+                    # 兜底：普通链接（整页跳转）。正常路径不会走到这里。
+                    st.markdown(f"{icon} [{label}]({_page_url(path)})")
 
 
 def storage_status() -> None:

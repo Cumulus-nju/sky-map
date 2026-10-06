@@ -60,6 +60,10 @@ else:
     )
 
 S.nav(_NAV_LABEL)
+# 正文最上方的页面导航条（手机上侧边栏是收起的，同学找不到别的页面）。
+# 同样 hasattr 兜底：旧 site_common 里没有 top_nav，直接调会整页崩。
+if hasattr(S, "top_nav"):
+    S.top_nav(_NAV_LABEL)
 
 WALL_PX = 460          # 投票墙缩略图长边（比投稿页的 900 小很多：一屏要放 18 张）
 PAGE_SIZE = 18
