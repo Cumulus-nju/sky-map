@@ -218,15 +218,11 @@ def identity_bar() -> tuple[bool, str, set[str]]:
     with st.container(border=True):
         st.markdown(f"**① 先确认身份，再投票**（每人最多 {C.VOTES_PER_PERSON} 票，"
                     f"{C.VOTES_PER_PERSON} 票需投给**不同**作品）")
-        st.caption(
-            "需要**姓名 + 学号/工号 + 手机号**三项一起登记，缺一不可。"
-            "三项都必填是故意的：**学号就是你的账号**，姓名和手机号是每次投票都要"
-            "对上的凭证 —— 换个手机号、换个名字都投不出第二份票，"
-            "同一个手机号也只能登记一个学号。"
-            "信息仅用于防止重复投票，**不在投票墙上公开**（只有主办方后台能看）。"
-        )
-        st.caption("⚠️ 之后再投票时，请**三项都填得和第一次一模一样**，"
-                   "否则会被判定为身份不符。")
+        # 这里原来还有两段说明（"三项都必填是故意的…"与"之后再投票要填得一模一样"）。
+        # 用户 2026-10-06 要求只留票数规则 ⇒ 两段都删了。
+        # 删掉不丢信息：隐私口径与"每次都要填得完全一致"都写在页面底部
+        # 收起的「📖 投票规则」里；而真填错时，报错文案本身也会提示
+        # "请用同一组信息投票（三项都要和第一次填的一模一样）"。
         with st.form("vote_identity"):
             f1, f2, f3, f4 = st.columns(4)
             name = f1.text_input("姓名", max_chars=20, placeholder="真实姓名")
@@ -422,7 +418,7 @@ if current is not None:
 # ---- ③ 筛选 + 作品网格 ----
 st.markdown("### ③ 作品陈列墙")
 
-f1, f2, f3, f4 = st.columns([1.1, 1.1, 1.1, 0.9])
+f1, f2, f3 = st.columns(3)
 with f1:
     camp_opts = ["全部"] + sorted({w.campus for w in items if w.campus})
     camp = st.selectbox("校区", camp_opts, key="v_camp")
@@ -431,11 +427,6 @@ with f2:
     wx = st.selectbox("天象", wx_opts, key="v_wx")
 with f3:
     order = st.selectbox("排序", ["最新投稿", "编号"], key="v_order")
-with f4:
-    if st.button("🔄 刷新", use_container_width=True, key="v_reload"):
-        wall_items.clear()
-        wall_thumb.clear()
-        st.rerun()
 
 view = [w for w in items
         if (camp == "全部" or w.campus == camp)
@@ -454,18 +445,6 @@ page = int(st.session_state.get("v_page", 1) or 1)
 page = max(1, min(pages, page))
 st.session_state["v_page"] = page
 
-p1, p2, p3 = st.columns([1, 3, 1])
-with p1:
-    if st.button("← 上一页", disabled=(page <= 1), use_container_width=True, key="v_prev"):
-        st.session_state["v_page"] = page - 1
-        st.rerun()
-with p2:
-    st.caption(f"第 {page} / {pages} 页 · 共 {len(view)} 幅作品")
-with p3:
-    if st.button("下一页 →", disabled=(page >= pages), use_container_width=True, key="v_next"):
-        st.session_state["v_page"] = page + 1
-        st.rerun()
-
 chunk = view[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
 cols = st.columns(NCOL)
 for i, w in enumerate(chunk):
@@ -483,7 +462,32 @@ for i, w in enumerate(chunk):
             st.session_state["v_open"] = w.sid
             st.rerun()
 
+# ---- 翻页与刷新：统一放在**作品列表底部**（用户 2026-10-06 要求）
+# 以前放在列表上方 —— 但翻页这个动作发生在"看完这一屏之后"，
+# 放在下面才是顺着人的动作顺序；顺带把「🔄 刷新」从筛选行里挪出来
+# （它本来挤在三个下拉框右边，既不像筛选、手机上又挤）。
+# 布局用两行而不是一行四列：手机上 390px 塞四个控件会挤成一条缝。
 st.divider()
+_b1, _b2 = st.columns(2)
+with _b1:
+    if st.button("← 上一页", disabled=(page <= 1), use_container_width=True, key="v_prev"):
+        st.session_state["v_page"] = page - 1
+        st.rerun()
+with _b2:
+    if st.button("下一页 →", disabled=(page >= pages), use_container_width=True, key="v_next"):
+        st.session_state["v_page"] = page + 1
+        st.rerun()
+
+_b3, _b4 = st.columns([3, 1])
+with _b3:
+    st.caption(f"第 {page} / {pages} 页 · 共 {len(view)} 幅作品"
+               + ("" if pages > 1 else "（已全部显示）"))
+with _b4:
+    if st.button("🔄 刷新", use_container_width=True, key="v_reload"):
+        wall_items.clear()
+        wall_thumb.clear()
+        st.rerun()
+
 with st.expander("📖 投票规则"):
     st.markdown(
         f"""
