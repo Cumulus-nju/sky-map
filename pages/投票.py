@@ -35,7 +35,31 @@ import vote_store as V  # noqa: E402
 from campus_config import CAMPUSES  # noqa: E402
 from submission_data import load_submissions  # noqa: E402
 
-S.nav(S.VOTE_PAGE)
+# ⚠⚠ **不许**把这行写成 `S.nav(S.VOTE_PAGE)`（第一版就是，线上真的整页炸了）。
+# 原因：Streamlit Cloud 只改 .py 时可能只做**模块级热重载** —— 入口脚本
+# （app.py / pages/*.py）每次重跑都是最新的，但 `import` 进来的模块可能还是
+# 旧进程里那份。于是出现"**新 pages/投票.py + 旧 site_common.py**"，
+# 旧模块里没有 `VOTE_PAGE` ⇒ `AttributeError` ⇒ 投票页整页打不开，
+# 而错误信息还被平台涂掉了（只剩一句 "original error message is redacted"）。
+# 这与 2026-10-05 那次 `take_pick()` 返回三元组导致的 IndexError **是同一个坑**，
+# 也与 requirements.txt 里记的两次重建是同一个坑 —— 这是第四次了。
+#
+# **规矩（写下来别再犯）**：入口脚本里凡是要用被 import 模块的
+# 新常量 / 新函数 / 新返回值，一律 `getattr(..., 默认值)` 兜底，
+# 并在页面上**明说**"模块是旧的、请 Reboot"，而不是抛一个看不懂的错。
+_NAV_LABEL = "作品投票"
+if hasattr(S, "VOTE_PAGE"):
+    _NAV_LABEL = S.VOTE_PAGE
+else:
+    st.error(
+        "⚠️ `site_common.py` 还是旧版本（本页面是新版）。\n\n"
+        "**请到 Streamlit Cloud 的 Manage app → Reboot 容器**，"
+        "等 1~2 分钟后刷新本页。\n\n"
+        "（这是 Streamlit 的「模块级热重载」行为：只改了 .py 时，"
+        "入口脚本会更新，但已加载的模块不会。）"
+    )
+
+S.nav(_NAV_LABEL)
 
 WALL_PX = 460          # 投票墙缩略图长边（比投稿页的 900 小很多：一屏要放 18 张）
 PAGE_SIZE = 18

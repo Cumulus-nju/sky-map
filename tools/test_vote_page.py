@@ -347,6 +347,36 @@ check("不出现裸的技术报错（relation/does not exist）",
       "does not exist" not in body and "relation" not in body, body[:200])
 V.get_vote_store(force=vote_store)
 
+
+# ---------------------------------------------------------------- [9] 新旧模块混用
+print("\n[9] 「新 pages/投票.py + 旧 site_common.py」绝不能整页崩")
+# 这是 Streamlit 的**模块级热重载**行为：只改 .py 时入口脚本会更新，
+# 但已加载的模块不会 —— 2026-10-06 线上真的因此整页 AttributeError
+# （`S.VOTE_PAGE` 在旧 site_common 里不存在），而且报错被平台涂掉了，
+# 只剩一句 "original error message is redacted"，极难排查。
+# 做法：直接把这个属性删掉，模拟旧模块。
+import site_common as S  # noqa: E402
+
+_had = hasattr(S, "VOTE_PAGE")
+_saved = getattr(S, "VOTE_PAGE", None)
+if _had:
+    del S.VOTE_PAGE
+try:
+    sub_store.write_submissions([
+        make_work(sub_store, sid="P0001", title="晚霞下的北大楼", status=C.ELIGIBLE_STATUS),
+    ])
+    V.get_vote_store(force=vote_store)
+    at = run_page()
+    check("缺 VOTE_PAGE 时页面**不崩**", not at.exception,
+          str(at.exception)[:200] if at.exception else "")
+    body = page_text(at)
+    check("页面明说「模块是旧的、请 Reboot」", "Reboot" in body, body[:200])
+    check("用安全默认标题兜底（导航照常渲染）", "天光云影" in body, body[:120])
+    check("作品仍然能浏览", "晚霞下的北大楼" in body, body[:200])
+finally:
+    if _had:
+        S.VOTE_PAGE = _saved
+
 print("\n" + "=" * 66)
 if FAILS:
     print(f"✗ {len(FAILS)} 项失败：")
