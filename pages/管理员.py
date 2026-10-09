@@ -60,8 +60,15 @@ def _campus_short(key: str) -> str:
 
 
 def login_gate() -> bool:
-    """未登录则显示登录/初始化界面，返回是否已登录。"""
-    S.ensure_admin_from_secrets()   # 部署时 secrets 里配了口令就自动就位
+    """未登录则显示登录/初始化界面，返回是否已登录。
+
+    ⚠ **每次打开这个页面都要重新输口令**（2026-10-09 用户要求的）：
+    登录状态只存在 Streamlit 的 `session_state` 里 —— 刷新页面、换个浏览器、
+    换个设备、过一会儿再来，都是新会话 ⇒ 都要重新输。
+    `ensure_admin_from_secrets()` 只负责把 Secrets 里的 `ADMIN_PASSWORD`
+    落盘成口令，**不会**替谁登录（它以前会，那是个洞）。
+    """
+    S.ensure_admin_from_secrets()   # 部署时 secrets 里配了口令就自动就位（但不代登录）
     if S.is_admin():
         return True
 
@@ -86,7 +93,7 @@ def login_gate() -> bool:
             elif pw1 != pw2:
                 st.error("两次输入不一致。")
             else:
-                S.set_admin_password(pw1)
+                S.set_admin_password(pw1, login=True)
                 st.success("已创建，正在进入后台…")
                 st.rerun()
         st.caption(f"（临时口令也可以先用 `{S.DEFAULT_PASSWORD}`，但建议自己设一个）")
@@ -100,6 +107,7 @@ def login_gate() -> bool:
             st.rerun()
         else:
             st.error("口令不对。")
+    st.caption("🔐 每次打开后台都要输一次口令；刷新页面、换浏览器也要重输。")
     return False
 
 

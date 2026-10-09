@@ -27,7 +27,7 @@ ADMIN_PAGE = "管理员"
 
 # 构建版本：显示在侧边栏，用来确认线上部署的是哪一版。
 # 改代码时**一起改这个**，push 后刷新线上即可确认是否真的更新了。
-BUILD = "2026-10-06c"
+BUILD = "2026-10-09a"
 
 # 页面文件（Streamlit 按文件路由：根目录 app.py = "/"，pages/ 下的各占一个路径）
 SUBMIT_FILE = "app.py"
@@ -297,10 +297,17 @@ def configured_password() -> str:
 
 
 def ensure_admin_from_secrets() -> None:
-    """部署时在 secrets 里配了 ADMIN_PASSWORD，就自动把口令写好。
+    """部署时在 secrets 里配了 ADMIN_PASSWORD，就自动把口令**写好**。
 
     这样云端重启后不会退回"首次设置"状态——否则文件系统一清，
     任何人都能重新设置管理员口令，等于后台没锁。
+
+    ⚠⚠ **本函数只负责把口令落盘，绝不代表"已登录"。**
+    2026-10-09 的 bug 就是从这儿来的：它以前走 `set_admin_password()`，
+    而那个函数顺手置了 `session_state["admin_ok"]=True`
+    ⇒ 任何**新会话**只要触发了一次"从 Secrets 同步口令"
+    （云端每次 Reboot / 容器被清后的第一个访问者都会触发），
+    不用输口令就直通后台。用户报的"新用户不用输秘钥也能进入"就是这个。
     """
     pw = configured_password()
     if not pw:
@@ -313,10 +320,23 @@ def ensure_admin_from_secrets() -> None:
         except Exception:
             need = True
     if need:
-        set_admin_password(pw)
+        try:
+            set_admin_password(pw, login=False)
+        except Exception:
+            # 云端文件系统被清 / 只读时写不进去 **不能让登录页跟着崩** ——
+            # 口令校验那边有直连 Secrets 的兜底（见 check_admin_password），
+            # 所以后台照样进得去，只是"已配置"状态不落盘而已。
+            pass
 
 
-def set_admin_password(pw: str) -> None:
+def set_admin_password(pw: str, *, login: bool = False) -> None:
+    """写入/更新管理员口令（只存加盐哈希，不存明文）。
+
+    ⚠ `login` 默认 **False**，别改回 True：
+      * 管理员在「首次设置」表单里自己设 ⇒ 传 `login=True`（设完直接进后台）；
+      * `ensure_admin_from_secrets()` 按 Secrets 自动就位 ⇒ `login=False`，
+        **必须的** —— 否则就退回 2026-10-09 那个"默认已登录"的洞。
+    """
     ADMIN_META.parent.mkdir(parents=True, exist_ok=True)
     salt = secrets.token_hex(16)
     ADMIN_META.write_text(
@@ -327,17 +347,31 @@ def set_admin_password(pw: str) -> None:
         ),
         encoding="utf-8",
     )
-    st.session_state["admin_ok"] = True
+    if login:
+        st.session_state["admin_ok"] = True
 
 
 def check_admin_password(pw: str) -> bool:
-    if not ADMIN_META.exists():
-        return False
-    try:
-        meta = json.loads(ADMIN_META.read_text(encoding="utf-8"))
-    except Exception:
-        return False
-    ok = secrets.compare_digest(_hash(pw, meta.get("salt", "")), meta.get("hash", ""))
+    """校验口令，对了就把**当前会话**标记成已登录。
+
+    ⚠ 只写 `st.session_state`（每会话独立），**不写任何 cookie / 文件 / 缓存** ——
+    所以刷新页面、换浏览器、换设备、隔一会儿再来，全都要重新输一遍口令。
+    这正是用户 2026-10-09 要的行为："每次进都需要重新输入秘钥"。
+    """
+    ok = False
+    if ADMIN_META.exists():
+        try:
+            meta = json.loads(ADMIN_META.read_text(encoding="utf-8"))
+            ok = secrets.compare_digest(_hash(pw, meta.get("salt", "")), meta.get("hash", ""))
+        except Exception:
+            ok = False
+    if not ok:
+        # 兜底：`data/admin.json` 没落盘（云端文件系统被清 / 只读 / 刚 Reboot）时，
+        # 直接和 Secrets 里的 ADMIN_PASSWORD 比。否则会出现
+        # "明明配了口令却怎么输都进不去"的死局。
+        preset = configured_password()
+        if preset:
+            ok = secrets.compare_digest(_hash(pw, "preset"), _hash(preset, "preset"))
     if ok:
         st.session_state["admin_ok"] = True
     return ok
